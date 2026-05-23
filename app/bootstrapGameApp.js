@@ -11835,6 +11835,8 @@ async function initCore(runtimeContext) {
 
   const tileRenderBounds = new Map();
   const renderedTileGeojson = new Map();
+  const tilePlaceholders = new Map();
+  const tilePlaceholderOps = new Map();
   const isSameRenderOrigin = (nextOrigin, prevOrigin) => {
     if (!nextOrigin || !prevOrigin) {
       return nextOrigin === prevOrigin;
@@ -11870,6 +11872,68 @@ async function initCore(runtimeContext) {
       centerLon: (minLon + maxLon) / 2
     };
     return currentRenderOrigin;
+  };
+
+  const createPlaceholderTileMesh = (tile) => {
+    if (!tile || !scene) return null;
+    const tileCenterX = (tile.x + 0.5) * TILE_SIZE_METERS;
+    const tileCenterZ = -(tile.y + 0.5) * TILE_SIZE_METERS;
+    const planeSize = TILE_SIZE_METERS * 0.96;
+    const geometry = new THREE.PlaneGeometry(planeSize, planeSize, 1, 1);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x3a5a3f,
+      roughness: 1,
+      metalness: 0,
+      transparent: true,
+      opacity: 0.33,
+      depthWrite: false
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(
+      tileCenterX,
+      getTerrainHeight(tileCenterX, tileCenterZ) + 0.03,
+      tileCenterZ
+    );
+    mesh.renderOrder = 1;
+    return mesh;
+  };
+
+  const ensureTilePlaceholder = (tileKey, tile) => {
+    if (!tileKey || tilePlaceholders.has(tileKey)) return;
+    const placeholder = createPlaceholderTileMesh(tile);
+    if (!placeholder) return;
+    placeholder.name = `tile-placeholder-${tileKey}`;
+    tilePlaceholderOps.set(tileKey, { type: 'add', mesh: placeholder });
+    requestAnimationFrame(() => {
+      const op = tilePlaceholderOps.get(tileKey);
+      if (!op || op.type !== 'add' || op.mesh !== placeholder) return;
+      tilePlaceholderOps.delete(tileKey);
+      scene.add(placeholder);
+      tilePlaceholders.set(tileKey, placeholder);
+    });
+  };
+
+  const removeTilePlaceholder = (tileKey) => {
+    if (!tileKey) return;
+    const pendingOp = tilePlaceholderOps.get(tileKey);
+    if (pendingOp?.type === 'add') {
+      pendingOp.mesh?.geometry?.dispose?.();
+      pendingOp.mesh?.material?.dispose?.();
+      tilePlaceholderOps.delete(tileKey);
+    }
+    const placeholder = tilePlaceholders.get(tileKey);
+    if (!placeholder) return;
+    tilePlaceholderOps.set(tileKey, { type: 'remove', mesh: placeholder });
+    requestAnimationFrame(() => {
+      const op = tilePlaceholderOps.get(tileKey);
+      if (!op || op.type !== 'remove' || op.mesh !== placeholder) return;
+      tilePlaceholderOps.delete(tileKey);
+      scene.remove(placeholder);
+      placeholder.geometry?.dispose?.();
+      placeholder.material?.dispose?.();
+      tilePlaceholders.delete(tileKey);
+    });
   };
 
   const updateTileRenderBounds = (tileKey, geojson) => {
@@ -12048,6 +12112,9 @@ async function initCore(runtimeContext) {
   window.clearTileCache = () => {
     tileCache.cache.clear();
     groundTiles.clear();
+    for (const tileKey of Array.from(tilePlaceholders.keys())) {
+      removeTilePlaceholder(tileKey);
+    }
     clearCache().catch((error) => console.warn('Failed to clear persistent tile cache:', error));
     rebuildMapFromCache();
   };
@@ -12133,6 +12200,7 @@ async function initCore(runtimeContext) {
 
   const updateTileMeshesImmediate = (tileKey, geojson) => {
     if (!tileKey || !geojson || !mapRenderer || !buildingsRenderer) return;
+    removeTilePlaceholder(tileKey);
     const previousGeojson = renderedTileGeojson.get(tileKey);
     if (previousGeojson === geojson) return;
     renderedTileGeojson.set(tileKey, geojson);
@@ -12236,6 +12304,7 @@ async function initCore(runtimeContext) {
         mapRenderer.removeTile?.(key);
         buildingsRenderer.removeTile?.(key);
         clearTerrainStampsForTile(key);
+        removeTilePlaceholder(key);
         renderedTileGeojson.delete(key);
         tileRenderBounds.delete(key);
         deferredTileUpdates.delete(key);
@@ -12265,6 +12334,7 @@ async function initCore(runtimeContext) {
     if (!tileCenter) return;
 
     mapFetchInFlight.add(tileKey);
+    ensureTilePlaceholder(tileKey, tile);
     let geojson;
     const priorGeojson = tileCache.cache.get(tileKey)?.geojson ?? renderedTileGeojson.get(tileKey) ?? null;
     try {
@@ -12309,6 +12379,7 @@ async function initCore(runtimeContext) {
         message: error?.message || 'OSM fetch failed',
         timestamp: Date.now()
       };
+      removeTilePlaceholder(tileKey);
       mapFetchInFlight.delete(tileKey);
       return;
     }
