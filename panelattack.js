@@ -76,12 +76,15 @@ document.getElementById('vs-bot-btn').addEventListener('click', () => {
   const name = nameInput.value.trim() || 'Player';
   myName = name;
   localStorage.setItem('panelattack_name', name);
+  const difficultyEl = document.querySelector('input[name="bot-difficulty"]:checked');
+  const difficulty = difficultyEl ? difficultyEl.value : 'medium';
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
   document.getElementById('my-label').textContent = myName;
-  document.getElementById('enemy-label').textContent = 'BOT';
+  document.getElementById('enemy-label').textContent = `BOT (${difficulty.toUpperCase()})`;
   gameSession = createBotGameSession({
-    onGameOver: (won) => showGameOver(won, 'BOT')
+    difficulty,
+    onGameOver: (won) => showGameOver(won, `BOT (${difficulty.toUpperCase()})`)
   });
   gameSession.start();
 });
@@ -827,7 +830,7 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
 }
 
 // ── Bot Game Session ──────────────────────────────────────────
-function createBotGameSession({ onGameOver }) {
+function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   const myCanvas = document.getElementById('my-canvas');
   const enemyCanvas = document.getElementById('enemy-canvas');
   const myCtx = myCanvas.getContext('2d');
@@ -857,10 +860,51 @@ function createBotGameSession({ onGameOver }) {
   let botCursorCol = 2;
   let botJunkQueue = 0;
   let botThinkTick = 0;
-  const BOT_THINK_RATE = 6; // how often (ticks) the bot acts
+  const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : 6;
+  const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : 3; // rows from top considered dangerous
 
   // ── Bot AI ────────────────────────────────────────────────
+  function getColumnTopRow(grid, col) {
+    for (let r = 0; r < ROWS; r++) {
+      if (grid[r][col] && !grid[r][col].clearing) return r;
+    }
+    return ROWS;
+  }
+
+  function botFindSurvivalSwap(grid) {
+    // Find columns in danger (topmost block too close to top)
+    const tops = Array.from({ length: COLS }, (_, c) => getColumnTopRow(grid, c));
+    const minTop = Math.min(...tops);
+    if (minTop > BOT_DANGER_ROW) return null; // no danger
+
+    // Find the tallest (most dangerous) column
+    const dangerCol = tops.indexOf(minTop);
+
+    // Look for a row near the top of that column where we can swap the block toward a shorter neighbor
+    for (let r = minTop; r < minTop + 5 && r < ROWS; r++) {
+      const block = grid[r][dangerCol];
+      if (!block || block.junk || block.clearing) continue;
+
+      // Try swapping left (dangerCol - 1) or right (dangerCol) toward shorter column
+      for (const [swapCol, neighborCol] of [[dangerCol - 1, dangerCol - 2], [dangerCol, dangerCol + 1]]) {
+        if (swapCol < 0 || swapCol >= COLS - 1) continue;
+        const neighborTop = tops[neighborCol];
+        if (neighborTop > minTop + 2) { // neighbor is meaningfully shorter
+          const a = grid[r][swapCol];
+          const b = grid[r][swapCol + 1];
+          if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+          return { row: r, col: swapCol, score: 999 };
+        }
+      }
+    }
+    return null;
+  }
+
   function botFindBestSwap(grid) {
+    // First check if survival swap is needed
+    const survivalSwap = botFindSurvivalSwap(grid);
+    if (survivalSwap) return survivalSwap;
+
     // Try every possible swap and score based on matches it creates
     let bestScore = -1;
     let bestRow = -1;
@@ -912,6 +956,10 @@ function createBotGameSession({ onGameOver }) {
   let botTarget = null;
 
   function botThink() {
+    // Re-evaluate survival threat every think tick (may override current target)
+    const survivalSwap = botFindSurvivalSwap(botGrid);
+    if (survivalSwap) botTarget = survivalSwap;
+
     // Find best swap if no current target
     if (!botTarget) {
       botTarget = botFindBestSwap(botGrid);
@@ -1157,7 +1205,7 @@ function createBotGameSession({ onGameOver }) {
   function renderLoop() {
     if (gameOver) return;
     renderBoard(myCtx, myGrid, cursorRow, cursorCol, playerState.riseOffset, true);
-    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, false);
+    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, true);
     animFrame = requestAnimationFrame(renderLoop);
   }
 
