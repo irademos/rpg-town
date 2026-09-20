@@ -928,55 +928,38 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   }
 
   function botFindBestSwap(grid) {
-    // First check if survival swap is needed
     const survivalSwap = botFindSurvivalSwap(grid);
     if (survivalSwap) return survivalSwap;
 
-    // Try every possible swap and score based on matches it creates
-    let bestScore = -1;
-    let bestRow = -1;
-    let bestCol = -1;
+    let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
+    let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS - 1; c++) {
-        const a = grid[r][c];
-        const b = grid[r][c + 1];
-        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
-
-        // Simulate swap
-        grid[r][c] = b;
-        grid[r][c + 1] = a;
-        const matched = findMatches(grid);
-        let score = matched.size;
-
-        // Extreme: also count how many near-matches (2-in-a-row) the swap creates
-        if (difficulty === 'extreme' && score === 0) {
-          score += countNearMatches(grid) * 0.1;
-        }
-
-        // Undo
-        grid[r][c] = a;
-        grid[r][c + 1] = b;
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestRow = r;
-          bestCol = c;
-        }
-      }
-    }
-
-    if (bestScore > 0) return { row: bestRow, col: bestCol, score: bestScore };
-
-    // No match-creating swap found — pick any valid swap (scan whole board bottom-up)
+    // Scan bottom-up so lower rows are preferred when tied
     for (let r = ROWS - 1; r >= 0; r--) {
       for (let c = 0; c < COLS - 1; c++) {
         const a = grid[r][c], b = grid[r][c + 1];
-        if ((a || b) && !a?.junk && !b?.junk && !a?.clearing && !b?.clearing) {
-          return { row: r, col: c, score: 0 };
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue; // nothing to swap
+
+        // Simulate swap
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const matchScore = findMatches(grid).size;
+        const setupScore = matchScore === 0 ? countNearMatches(grid) : 0;
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+
+        if (matchScore > bestMatchScore) {
+          bestMatchScore = matchScore; bestMatchRow = r; bestMatchCol = c;
+        }
+        if (matchScore === 0 && setupScore > bestSetupScore) {
+          bestSetupScore = setupScore; bestSetupRow = r; bestSetupCol = c;
         }
       }
     }
+
+    if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
+    if (bestSetupRow >= 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
     return null;
   }
 
@@ -994,7 +977,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
     // Validate target is still swappable; if stale, clear and pick fresh next tick
     const ta = botGrid[row][col], tb = botGrid[row][col + 1];
-    if (ta?.junk || tb?.junk || ta?.clearing || tb?.clearing || (!ta && !tb)) {
+    if (ta?.junk || tb?.junk || ta?.clearing || tb?.clearing || (!ta && !tb)) { // stale if both null or either is junk/clearing
       botTarget = null;
       botTarget = botFindBestSwap(botGrid);
       if (!botTarget) return;
@@ -1005,12 +988,12 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     if (botCursorRow !== tr) { botCursorRow += botCursorRow < tr ? 1 : -1; return; }
     if (botCursorCol !== tc) { botCursorCol += botCursorCol < tc ? 1 : -1; return; }
 
-    // At target — swap
+    // At target — swap (allow swapping with empty cell, same as player)
     const a = botGrid[botCursorRow][botCursorCol];
     const b = botGrid[botCursorRow][botCursorCol + 1];
-    if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing) {
-      botGrid[botCursorRow][botCursorCol] = b;
-      botGrid[botCursorRow][botCursorCol + 1] = a;
+    if (!a?.junk && !b?.junk && !a?.clearing && !b?.clearing && (a || b)) {
+      botGrid[botCursorRow][botCursorCol] = b || null;
+      botGrid[botCursorRow][botCursorCol + 1] = a || null;
     }
     botTarget = null;
 
