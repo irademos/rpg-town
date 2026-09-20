@@ -966,49 +966,44 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       }
     }
 
-    // If no match found, pick a random non-empty swap to avoid being stuck
-    if (bestScore === 0) {
-      const candidates = [];
-      for (let r = ROWS - 1; r >= ROWS - 4; r--) {
-        for (let c = 0; c < COLS - 1; c++) {
-          if (botGrid[r][c] && botGrid[r][c + 1] && !botGrid[r][c].junk && !botGrid[r][c + 1].junk) {
-            candidates.push([r, c]);
-          }
+    if (bestScore > 0) return { row: bestRow, col: bestCol, score: bestScore };
+
+    // No match-creating swap found — pick any valid swap (scan whole board bottom-up)
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if ((a || b) && !a?.junk && !b?.junk && !a?.clearing && !b?.clearing) {
+          return { row: r, col: c, score: 0 };
         }
       }
-      if (candidates.length) {
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        return { row: pick[0], col: pick[1], score: 0 };
-      }
-      return null;
     }
-
-    return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
+    return null;
   }
 
   let botTarget = null;
 
   function botThink() {
-    // Re-evaluate survival threat every think tick (may override current target)
+    // Survival threat always overrides current target
     const survivalSwap = botFindSurvivalSwap(botGrid);
     if (survivalSwap) botTarget = survivalSwap;
 
-    // Find best swap if no current target
-    if (!botTarget) {
-      botTarget = botFindBestSwap(botGrid);
-    }
+    if (!botTarget) botTarget = botFindBestSwap(botGrid);
     if (!botTarget) return;
 
-    // Move cursor toward target
     const { row, col } = botTarget;
-    if (botCursorRow !== row) {
-      botCursorRow += botCursorRow < row ? 1 : -1;
-      return;
+
+    // Validate target is still swappable; if stale, clear and pick fresh next tick
+    const ta = botGrid[row][col], tb = botGrid[row][col + 1];
+    if (ta?.junk || tb?.junk || ta?.clearing || tb?.clearing || (!ta && !tb)) {
+      botTarget = null;
+      botTarget = botFindBestSwap(botGrid);
+      if (!botTarget) return;
     }
-    if (botCursorCol !== col) {
-      botCursorCol += botCursorCol < col ? 1 : -1;
-      return;
-    }
+
+    // Move cursor one step toward target
+    const { row: tr, col: tc } = botTarget;
+    if (botCursorRow !== tr) { botCursorRow += botCursorRow < tr ? 1 : -1; return; }
+    if (botCursorCol !== tc) { botCursorCol += botCursorCol < tc ? 1 : -1; return; }
 
     // At target — swap
     const a = botGrid[botCursorRow][botCursorCol];
@@ -1019,7 +1014,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
     botTarget = null;
 
-    // Extreme: speed-raise only when board is safe (no danger columns)
+    // Extreme: speed-raise only when board is safe
     if (BOT_SPEED_RISE && !botFindSurvivalSwap(botGrid) && Math.random() < 0.03) {
       botState.speedRising = true;
     }
