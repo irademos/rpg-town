@@ -2,6 +2,10 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/panelattack",
+      "destination": "/panelattack.html"
+    },
+    {
       "source": "/((?!.*\\.).*)",
       "destination": "/index.html"
     }

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Attack - Lobby</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a1a;
+      --surface: #12122a;
+      --border: #2a2a5a;
+      --accent: #7c3aed;
+      --accent2: #06b6d4;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --junk: #78716c;
+
+      --c1: #ef4444;
+      --c2: #22c55e;
+      --c3: #3b82f6;
+      --c4: #f59e0b;
+      --c5: #a855f7;
+      --c6: #ec4899;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── LOBBY ─────────────────────────────────── */
+    #lobby-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+      min-height: 100vh;
+    }
+
+    .lobby-title {
+      font-size: 22px;
+      color: var(--accent2);
+      text-shadow: 0 0 20px var(--accent2);
+      margin-bottom: 8px;
+      letter-spacing: 2px;
+    }
+
+    .lobby-subtitle {
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+
+    .lobby-name-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      align-items: center;
+    }
+
+    .lobby-name-row input {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 10px;
+      padding: 8px 12px;
+      outline: none;
+    }
+
+    .lobby-name-row input:focus { border-color: var(--accent2); }
+
+    .btn {
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font-family: inherit;
+      font-size: 9px;
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.secondary { background: var(--surface); border: 2px solid var(--border); }
+    .btn.cyan { background: var(--accent2); color: #000; }
+    .btn.danger { background: var(--danger); }
+
+    .players-section {
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .players-section h2 {
+      font-size: 11px;
+      color: var(--accent2);
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .player-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .player-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+    }
+
+    .player-row .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+
+    .player-row .name { flex: 1; }
+
+    .player-row.me .name { color: var(--accent2); }
+
+    .empty-lobby {
+      color: var(--muted);
+      padding: 20px;
+      text-align: center;
+    }
+
+    /* ── INVITE MODAL ───────────────────────────── */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-backdrop.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 2px solid var(--accent);
+      padding: 28px 24px;
+      max-width: 380px;
+      width: 90%;
+      text-align: center;
+    }
+
+    .modal h3 { font-size: 13px; color: var(--accent2); margin-bottom: 12px; }
+    .modal p { color: var(--muted); margin-bottom: 20px; line-height: 1.8; }
+
+    .modal-actions { display: flex; gap: 10px; justify-content: center; }
+
+    /* ── GAME SCREEN ────────────────────────────── */
+    #game-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      min-height: 100vh;
+    }
+
+    .game-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 680px;
+      margin-bottom: 12px;
+    }
+
+    .game-title { font-size: 13px; color: var(--accent2); }
+
+    .boards-wrapper {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .board-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .board-label {
+      font-size: 9px;
+      color: var(--accent2);
+    }
+
+    .board-label.enemy-label { color: var(--danger); }
+
+    canvas {
+      border: 2px solid var(--border);
+      image-rendering: pixelated;
+    }
+
+    .my-board-border { border-color: var(--accent2); }
+    .enemy-board-border { border-color: var(--danger); }
+
+    .game-over-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .game-over-overlay.open { display: flex; }
+
+    .game-over-box {
+      background: var(--surface);
+      border: 2px solid var(--accent);
+      padding: 32px 28px;
+      text-align: center;
+      max-width: 360px;
+      width: 90%;
+    }
+
+    .game-over-box h2 { font-size: 20px; margin-bottom: 16px; }
+    .game-over-box .win { color: var(--success); }
+    .game-over-box .lose { color: var(--danger); }
+    .game-over-box p { color: var(--muted); margin-bottom: 24px; line-height: 1.8; }
+    .game-over-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+    .controls-hint {
+      font-size: 8px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 10px;
+      line-height: 2;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── LOBBY ─────────────────────────── -->
+<div id="lobby-screen">
+  <div class="lobby-title">PANEL ATTACK</div>
+  <div class="lobby-subtitle">Puzzle Battle Arena</div>
+
+  <div class="lobby-name-row">
+    <input id="name-input" type="text" placeholder="Your name" maxlength="16">
+    <button class="btn cyan" id="join-btn">Join Lobby</button>
+  </div>
+
+  <div class="players-section">
+    <h2>Players Online</h2>
+    <div class="player-list" id="player-list">
+      <div class="empty-lobby">No players online yet…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── INVITE RECEIVED MODAL ─────────────────────────── -->
+<div class="modal-backdrop" id="invite-modal">
+  <div class="modal">
+    <h3>CHALLENGE!</h3>
+    <p id="invite-text">Someone wants to battle you!</p>
+    <div class="modal-actions">
+      <button class="btn cyan" id="accept-btn">Accept</button>
+      <button class="btn danger" id="decline-btn">Decline</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── GAME SCREEN ─────────────────────────── -->
+<div id="game-screen">
+  <div class="game-header">
+    <span class="game-title">PANEL ATTACK</span>
+    <button class="btn secondary" id="forfeit-btn">Forfeit</button>
+  </div>
+
+  <div class="boards-wrapper">
+    <div class="board-container">
+      <div class="board-label" id="my-label">YOU</div>
+      <canvas id="my-canvas" class="my-board-border" width="192" height="288"></canvas>
+      <div class="controls-hint">← → ↑ ↓ Move cursor<br>Z / Space: Swap · X: Raise</div>
+    </div>
+    <div class="board-container">
+      <div class="board-label enemy-label" id="enemy-label">OPPONENT</div>
+      <canvas id="enemy-canvas" class="enemy-board-border" width="192" height="288"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ── GAME OVER ─────────────────────────── -->
+<div class="game-over-overlay" id="game-over-overlay">
+  <div class="game-over-box">
+    <h2 id="game-over-title"></h2>
+    <p id="game-over-msg"></p>
+    <div class="game-over-actions">
+      <button class="btn cyan" id="rematch-btn">Rematch</button>
+      <button class="btn secondary" id="lobby-btn">Back to Lobby</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/panelattack.js"></script>
+</body>
+</html>
