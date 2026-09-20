@@ -76,12 +76,15 @@ document.getElementById('vs-bot-btn').addEventListener('click', () => {
   const name = nameInput.value.trim() || 'Player';
   myName = name;
   localStorage.setItem('panelattack_name', name);
+  const difficultyEl = document.querySelector('input[name="bot-difficulty"]:checked');
+  const difficulty = difficultyEl ? difficultyEl.value : 'medium';
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
   document.getElementById('my-label').textContent = myName;
-  document.getElementById('enemy-label').textContent = 'BOT';
+  document.getElementById('enemy-label').textContent = `BOT (${difficulty.toUpperCase()})`;
   gameSession = createBotGameSession({
-    onGameOver: (won) => showGameOver(won, 'BOT')
+    difficulty,
+    onGameOver: (won) => showGameOver(won, `BOT (${difficulty.toUpperCase()})`)
   });
   gameSession.start();
 });
@@ -827,7 +830,7 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
 }
 
 // ── Bot Game Session ──────────────────────────────────────────
-function createBotGameSession({ onGameOver }) {
+function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   const myCanvas = document.getElementById('my-canvas');
   const enemyCanvas = document.getElementById('enemy-canvas');
   const myCtx = myCanvas.getContext('2d');
@@ -857,86 +860,147 @@ function createBotGameSession({ onGameOver }) {
   let botCursorCol = 2;
   let botJunkQueue = 0;
   let botThinkTick = 0;
-  const BOT_THINK_RATE = 6; // how often (ticks) the bot acts
+  const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : difficulty === 'extreme' ? 1 : 6;
+  const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : difficulty === 'extreme' ? 6 : 3;
+  const BOT_SPEED_RISE = difficulty === 'extreme'; // extreme bot also speed-raises aggressively
 
   // ── Bot AI ────────────────────────────────────────────────
-  function botFindBestSwap(grid) {
-    // Try every possible swap and score based on matches it creates
-    let bestScore = -1;
-    let bestRow = -1;
-    let bestCol = -1;
-
+  function countNearMatches(grid) {
+    let count = 0;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS - 1; c++) {
-        const a = grid[r][c];
-        const b = grid[r][c + 1];
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing && a.sym === b.sym) count++;
+      }
+    }
+    for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < ROWS - 1; r++) {
+        const a = grid[r][c], b = grid[r + 1][c];
+        if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing && a.sym === b.sym) count++;
+      }
+    }
+    return count;
+  }
+
+  function getColumnTopRow(grid, col) {
+    for (let r = 0; r < ROWS; r++) {
+      if (grid[r][col] && !grid[r][col].clearing) return r;
+    }
+    return ROWS;
+  }
+
+  function botFindSurvivalSwap(grid) {
+    const tops = Array.from({ length: COLS }, (_, c) => getColumnTopRow(grid, c));
+    const minTop = Math.min(...tops);
+    if (minTop > BOT_DANGER_ROW) return null;
+
+    // Collect all danger columns sorted tallest first
+    const dangerCols = tops
+      .map((t, c) => ({ c, t }))
+      .filter(({ t }) => t <= BOT_DANGER_ROW)
+      .sort((a, b) => a.t - b.t);
+
+    for (const { c: dangerCol, t: colTop } of dangerCols) {
+      // Try every row near the top of this column
+      for (let r = colTop; r < colTop + 6 && r < ROWS; r++) {
+        const block = grid[r][dangerCol];
+        if (!block || block.junk || block.clearing) continue;
+
+        // Candidate swaps: move block left (swapCol = dangerCol-1) or right (swapCol = dangerCol)
+        // A swap at swapCol exchanges columns swapCol and swapCol+1
+        const candidates = [];
+        if (dangerCol > 0) candidates.push({ swapCol: dangerCol - 1, destCol: dangerCol - 1 });
+        if (dangerCol < COLS - 1) candidates.push({ swapCol: dangerCol, destCol: dangerCol + 1 });
+
+        // Sort by destination column height (prefer moving to shortest)
+        candidates.sort((a, b) => tops[b.destCol] - tops[a.destCol]);
+
+        for (const { swapCol, destCol } of candidates) {
+          if (tops[destCol] <= colTop + 1) continue; // dest not meaningfully shorter
+          const a = grid[r][swapCol];
+          const b = grid[r][swapCol + 1];
+          if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+          return { row: r, col: swapCol, score: 999 };
+        }
+      }
+    }
+    return null;
+  }
+
+  function botFindBestSwap(grid) {
+    const survivalSwap = botFindSurvivalSwap(grid);
+    if (survivalSwap) return survivalSwap;
+
+    let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
+    let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;
+
+    // Scan bottom-up so lower rows are preferred when tied
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
         if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue; // nothing to swap
 
         // Simulate swap
-        grid[r][c] = b;
-        grid[r][c + 1] = a;
-        const matched = findMatches(grid);
-        const score = matched.size;
-        // Undo
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const matchScore = findMatches(grid).size;
+        const setupScore = matchScore === 0 ? countNearMatches(grid) : 0;
         grid[r][c] = a;
         grid[r][c + 1] = b;
 
-        if (score > bestScore) {
-          bestScore = score;
-          bestRow = r;
-          bestCol = c;
+        if (matchScore > bestMatchScore) {
+          bestMatchScore = matchScore; bestMatchRow = r; bestMatchCol = c;
+        }
+        if (matchScore === 0 && setupScore > bestSetupScore) {
+          bestSetupScore = setupScore; bestSetupRow = r; bestSetupCol = c;
         }
       }
     }
 
-    // If no match found, pick a random non-empty swap to avoid being stuck
-    if (bestScore === 0) {
-      const candidates = [];
-      for (let r = ROWS - 1; r >= ROWS - 4; r--) {
-        for (let c = 0; c < COLS - 1; c++) {
-          if (botGrid[r][c] && botGrid[r][c + 1] && !botGrid[r][c].junk && !botGrid[r][c + 1].junk) {
-            candidates.push([r, c]);
-          }
-        }
-      }
-      if (candidates.length) {
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        return { row: pick[0], col: pick[1], score: 0 };
-      }
-      return null;
-    }
-
-    return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
+    if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
+    if (bestSetupRow >= 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+    return null;
   }
 
   let botTarget = null;
 
   function botThink() {
-    // Find best swap if no current target
-    if (!botTarget) {
-      botTarget = botFindBestSwap(botGrid);
-    }
+    // Survival threat always overrides current target
+    const survivalSwap = botFindSurvivalSwap(botGrid);
+    if (survivalSwap) botTarget = survivalSwap;
+
+    if (!botTarget) botTarget = botFindBestSwap(botGrid);
     if (!botTarget) return;
 
-    // Move cursor toward target
     const { row, col } = botTarget;
-    if (botCursorRow !== row) {
-      botCursorRow += botCursorRow < row ? 1 : -1;
-      return;
-    }
-    if (botCursorCol !== col) {
-      botCursorCol += botCursorCol < col ? 1 : -1;
-      return;
+
+    // Validate target is still swappable; if stale, clear and pick fresh next tick
+    const ta = botGrid[row][col], tb = botGrid[row][col + 1];
+    if (ta?.junk || tb?.junk || ta?.clearing || tb?.clearing || (!ta && !tb)) { // stale if both null or either is junk/clearing
+      botTarget = null;
+      botTarget = botFindBestSwap(botGrid);
+      if (!botTarget) return;
     }
 
-    // At target — swap
+    // Move cursor one step toward target
+    const { row: tr, col: tc } = botTarget;
+    if (botCursorRow !== tr) { botCursorRow += botCursorRow < tr ? 1 : -1; return; }
+    if (botCursorCol !== tc) { botCursorCol += botCursorCol < tc ? 1 : -1; return; }
+
+    // At target — swap (allow swapping with empty cell, same as player)
     const a = botGrid[botCursorRow][botCursorCol];
     const b = botGrid[botCursorRow][botCursorCol + 1];
-    if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing) {
-      botGrid[botCursorRow][botCursorCol] = b;
-      botGrid[botCursorRow][botCursorCol + 1] = a;
+    if (!a?.junk && !b?.junk && !a?.clearing && !b?.clearing && (a || b)) {
+      botGrid[botCursorRow][botCursorCol] = b || null;
+      botGrid[botCursorRow][botCursorCol + 1] = a || null;
     }
     botTarget = null;
+
+    // Extreme: speed-raise only when board is safe
+    if (BOT_SPEED_RISE && !botFindSurvivalSwap(botGrid) && Math.random() < 0.03) {
+      botState.speedRising = true;
+    }
   }
 
   // ── Input ─────────────────────────────────────────────────
@@ -1157,7 +1221,7 @@ function createBotGameSession({ onGameOver }) {
   function renderLoop() {
     if (gameOver) return;
     renderBoard(myCtx, myGrid, cursorRow, cursorCol, playerState.riseOffset, true);
-    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, false);
+    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, true);
     animFrame = requestAnimationFrame(renderLoop);
   }
 
