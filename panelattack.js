@@ -860,10 +860,28 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   let botCursorCol = 2;
   let botJunkQueue = 0;
   let botThinkTick = 0;
-  const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : 6;
-  const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : 3; // rows from top considered dangerous
+  const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : difficulty === 'extreme' ? 1 : 6;
+  const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : difficulty === 'extreme' ? 6 : 3;
+  const BOT_SPEED_RISE = difficulty === 'extreme'; // extreme bot also speed-raises aggressively
 
   // ── Bot AI ────────────────────────────────────────────────
+  function countNearMatches(grid) {
+    let count = 0;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing && a.sym === b.sym) count++;
+      }
+    }
+    for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r < ROWS - 1; r++) {
+        const a = grid[r][c], b = grid[r + 1][c];
+        if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing && a.sym === b.sym) count++;
+      }
+    }
+    return count;
+  }
+
   function getColumnTopRow(grid, col) {
     for (let r = 0; r < ROWS; r++) {
       if (grid[r][col] && !grid[r][col].clearing) return r;
@@ -920,7 +938,13 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
         grid[r][c] = b;
         grid[r][c + 1] = a;
         const matched = findMatches(grid);
-        const score = matched.size;
+        let score = matched.size;
+
+        // Extreme: also count how many near-matches (2-in-a-row) the swap creates
+        if (difficulty === 'extreme' && score === 0) {
+          score += countNearMatches(grid) * 0.1;
+        }
+
         // Undo
         grid[r][c] = a;
         grid[r][c + 1] = b;
@@ -985,6 +1009,11 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       botGrid[botCursorRow][botCursorCol + 1] = a;
     }
     botTarget = null;
+
+    // Extreme: occasionally speed-raise to pile pressure
+    if (BOT_SPEED_RISE && Math.random() < 0.15) {
+      botState.speedRising = true;
+    }
   }
 
   // ── Input ─────────────────────────────────────────────────
