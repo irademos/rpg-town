@@ -71,6 +71,21 @@ function clearLobbyError() {
   errorEl.style.display = 'none';
 }
 
+// ── Bot game entry ────────────────────────────────────────────
+document.getElementById('vs-bot-btn').addEventListener('click', () => {
+  const name = nameInput.value.trim() || 'Player';
+  myName = name;
+  localStorage.setItem('panelattack_name', name);
+  lobbyScreen.style.display = 'none';
+  gameScreen.style.display = 'flex';
+  document.getElementById('my-label').textContent = myName;
+  document.getElementById('enemy-label').textContent = 'BOT';
+  gameSession = createBotGameSession({
+    onGameOver: (won) => showGameOver(won, 'BOT')
+  });
+  gameSession.start();
+});
+
 // Restore name
 nameInput.value = localStorage.getItem('panelattack_name') || '';
 
@@ -807,6 +822,356 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
     },
     forfeit() {
       pushState(true);
+    }
+  };
+}
+
+// ── Bot Game Session ──────────────────────────────────────────
+function createBotGameSession({ onGameOver }) {
+  const myCanvas = document.getElementById('my-canvas');
+  const enemyCanvas = document.getElementById('enemy-canvas');
+  const myCtx = myCanvas.getContext('2d');
+  const enemyCtx = enemyCanvas.getContext('2d');
+
+  // Player board
+  const myGrid = emptyGrid();
+  fillInitialRows(myGrid, 5);
+
+  // Bot board
+  const botGrid = emptyGrid();
+  fillInitialRows(botGrid, 5);
+
+  let cursorRow = ROWS - 3;
+  let cursorCol = 2;
+  let riseOffset = 0;
+  let myNextRow = generateNextRow(myGrid);
+  let gameOver = false;
+  let animFrame = null;
+  let tickInterval = null;
+  let myJunkQueue = 0;
+
+  // Bot state
+  let botRiseOffset = 0;
+  let botNextRow = generateNextRow(botGrid);
+  let botCursorRow = ROWS - 3;
+  let botCursorCol = 2;
+  let botJunkQueue = 0;
+  let botThinkTick = 0;
+  const BOT_THINK_RATE = 6; // how often (ticks) the bot acts
+
+  // ── Bot AI ────────────────────────────────────────────────
+  function botFindBestSwap(grid) {
+    // Try every possible swap and score based on matches it creates
+    let bestScore = -1;
+    let bestRow = -1;
+    let bestCol = -1;
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c];
+        const b = grid[r][c + 1];
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+
+        // Simulate swap
+        grid[r][c] = b;
+        grid[r][c + 1] = a;
+        const matched = findMatches(grid);
+        const score = matched.size;
+        // Undo
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestRow = r;
+          bestCol = c;
+        }
+      }
+    }
+
+    // If no match found, pick a random non-empty swap to avoid being stuck
+    if (bestScore === 0) {
+      const candidates = [];
+      for (let r = ROWS - 1; r >= ROWS - 4; r--) {
+        for (let c = 0; c < COLS - 1; c++) {
+          if (botGrid[r][c] && botGrid[r][c + 1] && !botGrid[r][c].junk && !botGrid[r][c + 1].junk) {
+            candidates.push([r, c]);
+          }
+        }
+      }
+      if (candidates.length) {
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        return { row: pick[0], col: pick[1], score: 0 };
+      }
+      return null;
+    }
+
+    return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
+  }
+
+  let botTarget = null;
+
+  function botThink() {
+    // Find best swap if no current target
+    if (!botTarget) {
+      botTarget = botFindBestSwap(botGrid);
+    }
+    if (!botTarget) return;
+
+    // Move cursor toward target
+    const { row, col } = botTarget;
+    if (botCursorRow !== row) {
+      botCursorRow += botCursorRow < row ? 1 : -1;
+      return;
+    }
+    if (botCursorCol !== col) {
+      botCursorCol += botCursorCol < col ? 1 : -1;
+      return;
+    }
+
+    // At target — swap
+    const a = botGrid[botCursorRow][botCursorCol];
+    const b = botGrid[botCursorRow][botCursorCol + 1];
+    if (a && b && !a.junk && !b.junk && !a.clearing && !b.clearing) {
+      botGrid[botCursorRow][botCursorCol] = b;
+      botGrid[botCursorRow][botCursorCol + 1] = a;
+    }
+    botTarget = null;
+  }
+
+  // ── Input ─────────────────────────────────────────────────
+  const keys = new Set();
+  const keyRepeat = {};
+  const KEY_INITIAL_DELAY = 200;
+  const KEY_REPEAT_DELAY = 80;
+
+  function handleKey(e) {
+    if (gameOver) return;
+    const now = Date.now();
+    const process = (key) => {
+      if (key === 'ArrowLeft') cursorCol = Math.max(0, cursorCol - 1);
+      else if (key === 'ArrowRight') cursorCol = Math.min(COLS - 2, cursorCol + 1);
+      else if (key === 'ArrowUp') cursorRow = Math.max(0, cursorRow - 1);
+      else if (key === 'ArrowDown') cursorRow = Math.min(ROWS - 1, cursorRow + 1);
+      else if (key === 'z' || key === ' ') playerSwap();
+      else if (key === 'x') playerSpeedRise();
+    };
+    if (e.type === 'keydown') {
+      if (!keys.has(e.key)) {
+        keys.add(e.key);
+        keyRepeat[e.key] = { next: now + KEY_INITIAL_DELAY };
+        process(e.key);
+        e.preventDefault();
+      }
+    } else if (e.type === 'keyup') {
+      keys.delete(e.key);
+      delete keyRepeat[e.key];
+    }
+  }
+
+  function processKeyRepeats() {
+    const now = Date.now();
+    for (const key of keys) {
+      if (keyRepeat[key] && now >= keyRepeat[key].next) {
+        keyRepeat[key].next = now + KEY_REPEAT_DELAY;
+        if (key === 'ArrowLeft') cursorCol = Math.max(0, cursorCol - 1);
+        else if (key === 'ArrowRight') cursorCol = Math.min(COLS - 2, cursorCol + 1);
+        else if (key === 'ArrowUp') cursorRow = Math.max(0, cursorRow - 1);
+        else if (key === 'ArrowDown') cursorRow = Math.min(ROWS - 1, cursorRow + 1);
+      }
+    }
+  }
+
+  window.addEventListener('keydown', handleKey);
+  window.addEventListener('keyup', handleKey);
+
+  // Mobile controls
+  const mobileHeld = {};
+  function startMobileRepeat(action) {
+    if (mobileHeld[action]) return;
+    action();
+    const timer = { id: null };
+    const repeat = () => { action(); timer.id = setTimeout(repeat, KEY_REPEAT_DELAY); };
+    timer.id = setTimeout(repeat, KEY_INITIAL_DELAY);
+    mobileHeld[action] = timer;
+  }
+  function stopMobileRepeat(action) {
+    const timer = mobileHeld[action];
+    if (timer) { clearTimeout(timer.id); delete mobileHeld[action]; }
+  }
+
+  const dpadMap = {
+    'dpad-up':    () => { cursorRow = Math.max(0, cursorRow - 1); },
+    'dpad-down':  () => { cursorRow = Math.min(ROWS - 1, cursorRow + 1); },
+    'dpad-left':  () => { cursorCol = Math.max(0, cursorCol - 1); },
+    'dpad-right': () => { cursorCol = Math.min(COLS - 2, cursorCol + 1); },
+  };
+  Object.entries(dpadMap).forEach(([id, action]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const start = (e) => { e.preventDefault(); if (!gameOver) startMobileRepeat(action); };
+    const end = () => stopMobileRepeat(action);
+    el.addEventListener('touchstart', start, { passive: false });
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+  });
+
+  const swapEl = document.getElementById('mobile-swap');
+  const raiseEl = document.getElementById('mobile-raise');
+  if (swapEl) swapEl.addEventListener('touchstart', (e) => { e.preventDefault(); if (!gameOver) playerSwap(); }, { passive: false });
+  if (raiseEl) raiseEl.addEventListener('touchstart', (e) => { e.preventDefault(); if (!gameOver) playerSpeedRise(); }, { passive: false });
+
+  function cleanupMobile() {
+    Object.keys(mobileHeld).forEach(k => stopMobileRepeat(k));
+  }
+
+  let speedRising = false;
+  function playerSpeedRise() { speedRising = true; }
+
+  function playerSwap() {
+    if (gameOver) return;
+    const r = cursorRow, c = cursorCol;
+    if (r < 0 || r >= ROWS || c < 0 || c + 1 >= COLS) return;
+    const a = myGrid[r][c], b = myGrid[r][c + 1];
+    if (a?.junk || b?.junk || a?.clearing || b?.clearing) return;
+    myGrid[r][c] = b || null;
+    myGrid[r][c + 1] = a || null;
+  }
+
+  // ── Tick ──────────────────────────────────────────────────
+  function tickBoard(grid, state) {
+    // Rise
+    const riseRate = state.speedRising ? 4 : 0.2;
+    state.riseOffset += riseRate;
+    state.speedRising = false;
+
+    if (state.riseOffset >= CELL) {
+      state.riseOffset -= CELL;
+      grid.shift();
+      grid.push([...state.nextRow]);
+      state.nextRow = generateNextRow(grid);
+      state.cursorRow = Math.max(0, state.cursorRow - 1);
+      if (grid[0].some(b => b !== null)) return 'lose';
+    }
+
+    // Apply junk
+    if (state.junkQueue > 0) {
+      addJunk(grid, state.junkQueue);
+      state.junkQueue = 0;
+    }
+
+    applyGravity(grid);
+
+    // Tick clearing
+    let anyClearing = false;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const b = grid[r][c];
+        if (b?.clearing) {
+          anyClearing = true;
+          b.clearTimer--;
+          if (b.clearTimer <= 0) grid[r][c] = null;
+        }
+      }
+    }
+
+    // Match
+    if (!anyClearing) {
+      const matched = findMatches(grid);
+      if (matched.size > 0) {
+        const size = countMatchSize(matched);
+        markClearing(grid, matched);
+        breakAdjacentJunk(grid, matched);
+        if (size >= 4) state.sendJunk(size - 3);
+      }
+    }
+
+    return 'ok';
+  }
+
+  const playerState = {
+    riseOffset: 0,
+    speedRising: false,
+    nextRow: myNextRow,
+    cursorRow,
+    cursorCol,
+    junkQueue: myJunkQueue,
+    sendJunk: (n) => { botJunkQueue += n; }
+  };
+
+  const botState = {
+    riseOffset: 0,
+    speedRising: false,
+    nextRow: botNextRow,
+    cursorRow: botCursorRow,
+    cursorCol: botCursorCol,
+    junkQueue: botJunkQueue,
+    sendJunk: (n) => { playerState.junkQueue += n; }
+  };
+
+  function tick() {
+    if (gameOver) return;
+
+    processKeyRepeats();
+
+    // Sync player cursor/junk into state
+    playerState.cursorRow = cursorRow;
+    playerState.cursorCol = cursorCol;
+    playerState.speedRising = speedRising;
+    speedRising = false;
+    playerState.junkQueue = myJunkQueue;
+    myJunkQueue = 0;
+
+    botState.junkQueue = botJunkQueue;
+    botJunkQueue = 0;
+
+    // Bot AI
+    botThinkTick++;
+    if (botThinkTick >= BOT_THINK_RATE) {
+      botThinkTick = 0;
+      botThink();
+      botState.cursorRow = botCursorRow;
+      botState.cursorCol = botCursorCol;
+    }
+
+    const playerResult = tickBoard(myGrid, playerState);
+    const botResult = tickBoard(botGrid, botState);
+
+    // Sync state back
+    cursorRow = playerState.cursorRow;
+    myJunkQueue = playerState.junkQueue;
+    botJunkQueue = botState.junkQueue;
+
+    if (playerResult === 'lose') { gameOver = true; cleanup(); onGameOver(false); return; }
+    if (botResult === 'lose') { gameOver = true; cleanup(); onGameOver(true); return; }
+  }
+
+  function cleanup() {
+    clearInterval(tickInterval);
+    cancelAnimationFrame(animFrame);
+    window.removeEventListener('keydown', handleKey);
+    window.removeEventListener('keyup', handleKey);
+    cleanupMobile();
+  }
+
+  function renderLoop() {
+    if (gameOver) return;
+    renderBoard(myCtx, myGrid, cursorRow, cursorCol, playerState.riseOffset, true);
+    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, false);
+    animFrame = requestAnimationFrame(renderLoop);
+  }
+
+  return {
+    start() {
+      tickInterval = setInterval(tick, TICK_MS);
+      renderLoop();
+    },
+    destroy() {
+      gameOver = true;
+      cleanup();
+    },
+    forfeit() {
+      // no-op for bot game
     }
   };
 }
