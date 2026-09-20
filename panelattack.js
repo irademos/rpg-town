@@ -890,24 +890,33 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   }
 
   function botFindSurvivalSwap(grid) {
-    // Find columns in danger (topmost block too close to top)
     const tops = Array.from({ length: COLS }, (_, c) => getColumnTopRow(grid, c));
     const minTop = Math.min(...tops);
-    if (minTop > BOT_DANGER_ROW) return null; // no danger
+    if (minTop > BOT_DANGER_ROW) return null;
 
-    // Find the tallest (most dangerous) column
-    const dangerCol = tops.indexOf(minTop);
+    // Collect all danger columns sorted tallest first
+    const dangerCols = tops
+      .map((t, c) => ({ c, t }))
+      .filter(({ t }) => t <= BOT_DANGER_ROW)
+      .sort((a, b) => a.t - b.t);
 
-    // Look for a row near the top of that column where we can swap the block toward a shorter neighbor
-    for (let r = minTop; r < minTop + 5 && r < ROWS; r++) {
-      const block = grid[r][dangerCol];
-      if (!block || block.junk || block.clearing) continue;
+    for (const { c: dangerCol, t: colTop } of dangerCols) {
+      // Try every row near the top of this column
+      for (let r = colTop; r < colTop + 6 && r < ROWS; r++) {
+        const block = grid[r][dangerCol];
+        if (!block || block.junk || block.clearing) continue;
 
-      // Try swapping left (dangerCol - 1) or right (dangerCol) toward shorter column
-      for (const [swapCol, neighborCol] of [[dangerCol - 1, dangerCol - 2], [dangerCol, dangerCol + 1]]) {
-        if (swapCol < 0 || swapCol >= COLS - 1) continue;
-        const neighborTop = tops[neighborCol];
-        if (neighborTop > minTop + 2) { // neighbor is meaningfully shorter
+        // Candidate swaps: move block left (swapCol = dangerCol-1) or right (swapCol = dangerCol)
+        // A swap at swapCol exchanges columns swapCol and swapCol+1
+        const candidates = [];
+        if (dangerCol > 0) candidates.push({ swapCol: dangerCol - 1, destCol: dangerCol - 1 });
+        if (dangerCol < COLS - 1) candidates.push({ swapCol: dangerCol, destCol: dangerCol + 1 });
+
+        // Sort by destination column height (prefer moving to shortest)
+        candidates.sort((a, b) => tops[b.destCol] - tops[a.destCol]);
+
+        for (const { swapCol, destCol } of candidates) {
+          if (tops[destCol] <= colTop + 1) continue; // dest not meaningfully shorter
           const a = grid[r][swapCol];
           const b = grid[r][swapCol + 1];
           if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
@@ -1010,8 +1019,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
     botTarget = null;
 
-    // Extreme: occasionally speed-raise to pile pressure
-    if (BOT_SPEED_RISE && Math.random() < 0.15) {
+    // Extreme: speed-raise only when board is safe (no danger columns)
+    if (BOT_SPEED_RISE && !botFindSurvivalSwap(botGrid) && Math.random() < 0.03) {
       botState.speedRising = true;
     }
   }
