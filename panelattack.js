@@ -49,6 +49,7 @@ let myName = '';
 let lobbyRef = null;
 let myPresenceRef = null;
 let incomingInviteUnsub = null;
+let currentLobbyData = {};
 
 const lobbyScreen = document.getElementById('lobby-screen');
 const gameScreen = document.getElementById('game-screen');
@@ -58,6 +59,17 @@ const inviteModal = document.getElementById('invite-modal');
 const inviteText = document.getElementById('invite-text');
 const nameInput = document.getElementById('name-input');
 const joinBtn = document.getElementById('join-btn');
+const errorEl = document.getElementById('lobby-error');
+
+function showLobbyError(msg) {
+  errorEl.textContent = msg;
+  errorEl.style.display = 'block';
+}
+
+function clearLobbyError() {
+  errorEl.textContent = '';
+  errorEl.style.display = 'none';
+}
 
 // Restore name
 nameInput.value = localStorage.getItem('panelattack_name') || '';
@@ -65,32 +77,55 @@ nameInput.value = localStorage.getItem('panelattack_name') || '';
 joinBtn.addEventListener('click', joinLobby);
 nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') joinLobby(); });
 
-function joinLobby() {
+async function joinLobby() {
   const name = nameInput.value.trim();
   if (!name) { nameInput.focus(); return; }
+  clearLobbyError();
   myName = name;
   localStorage.setItem('panelattack_name', name);
 
   myId = push(ref(db, 'panelattack/lobby')).key;
   myPresenceRef = ref(db, `panelattack/lobby/${myId}`);
 
-  set(myPresenceRef, { name, joinedAt: Date.now() });
-  onDisconnect(myPresenceRef).remove();
-
   nameInput.disabled = true;
   joinBtn.disabled = true;
 
-  watchLobby();
-  watchInvites();
+  // Optimistically show yourself immediately
+  currentLobbyData = { ...currentLobbyData, [myId]: { name, joinedAt: Date.now() } };
+  renderPlayerList(currentLobbyData);
+
+  try {
+    await set(myPresenceRef, { name, joinedAt: Date.now() });
+    onDisconnect(myPresenceRef).remove();
+    watchInvites();
+  } catch (err) {
+    showLobbyError(`Failed to join lobby: ${err.message}`);
+    // Revert optimistic update
+    delete currentLobbyData[myId];
+    renderPlayerList(currentLobbyData);
+    myId = null;
+    myPresenceRef = null;
+    nameInput.disabled = false;
+    joinBtn.disabled = false;
+  }
 }
 
 function watchLobby() {
   lobbyRef = ref(db, 'panelattack/lobby');
-  onValue(lobbyRef, snap => {
-    const data = snap.val() || {};
-    renderPlayerList(data);
-  });
+  onValue(
+    lobbyRef,
+    snap => {
+      currentLobbyData = snap.val() || {};
+      renderPlayerList(currentLobbyData);
+    },
+    err => {
+      showLobbyError(`Lobby connection error: ${err.message}`);
+    }
+  );
 }
+
+// Watch lobby immediately so players are visible before joining
+watchLobby();
 
 function renderPlayerList(data) {
   const ids = Object.keys(data);
