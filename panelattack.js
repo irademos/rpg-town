@@ -43,6 +43,8 @@ const FALL_DELAY = 3;
 const CLEAR_DELAY = 30;
 const JUNK_BREAK_DELAY = 15;
 
+let junkSetCounter = 0;
+
 // ── Lobby state ───────────────────────────────────────────────
 let myId = null;
 let myName = '';
@@ -382,30 +384,36 @@ function markClearing(grid, matched) {
 }
 
 function breakAdjacentJunk(grid, matched) {
-  const toBreak = new Set();
+  const setsToBreak = new Set();
   matched.forEach(key => {
     const [r, c] = key.split(',').map(Number);
-    const neighbors = [[r-1,c],[r+1,c],[r,c-1],[r,c+1]];
-    neighbors.forEach(([nr, nc]) => {
+    [[r-1,c],[r+1,c],[r,c-1],[r,c+1]].forEach(([nr, nc]) => {
       if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc]?.junk) {
-        toBreak.add(`${nr},${nc}`);
+        setsToBreak.add(grid[nr][nc].junkSetId);
       }
     });
   });
-  toBreak.forEach(key => {
-    const [r, c] = key.split(',').map(Number);
-    // Convert junk to a clearing regular block
-    grid[r][c] = { sym: Math.floor(Math.random() * SYMBOLS.length), junk: false, clearing: true, clearTimer: JUNK_BREAK_DELAY, fallDelay: 0 };
-  });
+  if (setsToBreak.size === 0) return;
+  // Convert all blocks in each broken set to playable symbol blocks
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const block = grid[r][c];
+      if (block?.junk && setsToBreak.has(block.junkSetId)) {
+        grid[r][c] = { sym: Math.floor(Math.random() * SYMBOLS.length), junk: false, clearing: false, clearTimer: 0, fallDelay: 0 };
+      }
+    }
+  }
 }
 
 // ── Apply gravity ─────────────────────────────────────────────
 function applyGravity(grid) {
   let moved = false;
+
+  // Regular (non-junk) blocks fall column by column
   for (let c = 0; c < COLS; c++) {
     for (let r = ROWS - 2; r >= 0; r--) {
       const block = grid[r][c];
-      if (block && !block.clearing && grid[r+1][c] === null) {
+      if (block && !block.junk && !block.clearing && grid[r+1][c] === null) {
         if (block.fallDelay > 0) { block.fallDelay--; continue; }
         grid[r+1][c] = block;
         grid[r][c] = null;
@@ -413,13 +421,46 @@ function applyGravity(grid) {
       }
     }
   }
+
+  // Junk sets fall as rigid horizontal units
+  const junkSets = new Map();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const block = grid[r][c];
+      if (block?.junk) {
+        if (!junkSets.has(block.junkSetId)) junkSets.set(block.junkSetId, []);
+        junkSets.get(block.junkSetId).push({ r, c });
+      }
+    }
+  }
+
+  for (const [, cells] of junkSets) {
+    const setPositions = new Set(cells.map(({ r, c }) => `${r},${c}`));
+    let canFall = true;
+    for (const { r, c } of cells) {
+      if (r + 1 >= ROWS) { canFall = false; break; }
+      const below = grid[r + 1][c];
+      if (below !== null && !setPositions.has(`${r + 1},${c}`)) {
+        canFall = false;
+        break;
+      }
+    }
+    if (canFall) {
+      // Move bottom-to-top to avoid overwriting cells in the same set
+      const sorted = [...cells].sort((a, b) => b.r - a.r);
+      for (const { r, c } of sorted) {
+        grid[r + 1][c] = grid[r][c];
+        grid[r][c] = null;
+      }
+      moved = true;
+    }
+  }
+
   return moved;
 }
 
 // ── Add junk ──────────────────────────────────────────────────
 function addJunk(grid, count) {
-  // Add `count` junk columns in top row, shifting everything down by one if needed
-  // Find highest occupied row
   let topRow = ROWS;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -428,16 +469,15 @@ function addJunk(grid, count) {
     if (topRow < ROWS) break;
   }
 
-  // Shift everything up by 1 row if top is occupied
   if (topRow === 0) return; // board full
 
   const junkRow = Math.max(0, topRow - 1);
   const cols = Math.min(count, COLS);
+  const setId = ++junkSetCounter;
   for (let c = 0; c < cols; c++) {
-    grid[junkRow][c] = { sym: -1, junk: true, clearing: false, clearTimer: 0, fallDelay: 0 };
+    grid[junkRow][c] = { sym: -1, junk: true, junkSetId: setId, clearing: false, clearTimer: 0, fallDelay: 0 };
   }
 
-  // Fill remaining junk if more than COLS
   if (count > COLS) {
     addJunk(grid, count - COLS);
   }
