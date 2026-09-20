@@ -444,14 +444,14 @@ function addJunk(grid, count) {
 }
 
 // ── Render board ──────────────────────────────────────────────
-function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor) {
+function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, nextRow) {
   ctx.fillStyle = BG_COLOR;
-  ctx.fillRect(0, 0, COLS * CELL, ROWS * CELL);
+  ctx.fillRect(0, 0, COLS * CELL, (ROWS + 1) * CELL);
 
   // Grid lines
   ctx.strokeStyle = GRID_COLOR;
   ctx.lineWidth = 1;
-  for (let r = 0; r <= ROWS; r++) {
+  for (let r = 0; r <= ROWS + 1; r++) {
     ctx.beginPath();
     ctx.moveTo(0, r * CELL - riseOffset);
     ctx.lineTo(COLS * CELL, r * CELL - riseOffset);
@@ -460,7 +460,7 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor) {
   for (let c = 0; c <= COLS; c++) {
     ctx.beginPath();
     ctx.moveTo(c * CELL, 0);
-    ctx.lineTo(c * CELL, ROWS * CELL);
+    ctx.lineTo(c * CELL, (ROWS + 1) * CELL);
     ctx.stroke();
   }
 
@@ -513,6 +513,26 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor) {
         ctx.fillText(SYMBOLS[block.sym], x + CELL / 2, y + CELL / 2);
       }
     }
+  }
+
+  // Incoming next row (dimmed, rising from below)
+  if (nextRow) {
+    ctx.globalAlpha = 0.45;
+    for (let c = 0; c < COLS; c++) {
+      const block = nextRow[c];
+      if (!block) continue;
+      const x = c * CELL;
+      const y = ROWS * CELL - riseOffset;
+      const col = COLORS[block.sym] || '#fff';
+      ctx.fillStyle = col;
+      ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+      ctx.fillStyle = '#fff';
+      ctx.font = `${CELL * 0.4}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(SYMBOLS[block.sym], x + CELL / 2, y + CELL / 2);
+    }
+    ctx.globalAlpha = 1;
   }
 
   // Cursor
@@ -809,8 +829,8 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
   // Render loop
   function renderLoop() {
     if (gameOver) return;
-    renderBoard(myCtx, myGrid, cursorRow, cursorCol, riseOffset, true);
-    renderBoard(enemyCtx, oppGrid, -1, -1, 0, false);
+    renderBoard(myCtx, myGrid, cursorRow, cursorCol, riseOffset, true, nextRow);
+    renderBoard(enemyCtx, oppGrid, -1, -1, 0, false, null);
     animFrame = requestAnimationFrame(renderLoop);
   }
 
@@ -1220,8 +1240,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
   function renderLoop() {
     if (gameOver) return;
-    renderBoard(myCtx, myGrid, cursorRow, cursorCol, playerState.riseOffset, true);
-    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, true);
+    renderBoard(myCtx, myGrid, cursorRow, cursorCol, playerState.riseOffset, true, playerState.nextRow);
+    renderBoard(enemyCtx, botGrid, botCursorRow, botCursorCol, botState.riseOffset, true, botState.nextRow);
     animFrame = requestAnimationFrame(renderLoop);
   }
 
