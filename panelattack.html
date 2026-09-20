@@ -260,30 +260,30 @@
       display: none;
       flex-direction: row;
       align-items: center;
-      justify-content: center;
-      gap: 10px;
+      justify-content: space-between;
       width: 100%;
+      padding: 0 12px;
       user-select: none;
       -webkit-user-select: none;
     }
 
     .dpad {
       display: grid;
-      grid-template-columns: repeat(3, 44px);
-      grid-template-rows: repeat(3, 44px);
-      gap: 3px;
+      grid-template-columns: repeat(3, 58px);
+      grid-template-rows: repeat(3, 58px);
+      gap: 4px;
     }
 
     .dpad-btn {
       background: var(--surface);
       border: 2px solid var(--border);
       color: var(--text);
-      font-size: 16px;
+      font-size: 22px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      border-radius: 6px;
+      border-radius: 8px;
       touch-action: manipulation;
       transition: background 0.1s, border-color 0.1s;
       -webkit-tap-highlight-color: transparent;
@@ -297,7 +297,7 @@
     .action-btns {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 12px;
     }
 
     .action-btn {
@@ -305,14 +305,16 @@
       border: 2px solid var(--border);
       color: var(--text);
       font-family: inherit;
-      font-size: 8px;
-      padding: 12px 16px;
+      font-size: 10px;
+      padding: 18px 22px;
       cursor: pointer;
-      border-radius: 6px;
+      border-radius: 8px;
       touch-action: manipulation;
       transition: background 0.1s, border-color 0.1s;
       -webkit-tap-highlight-color: transparent;
       white-space: nowrap;
+      min-width: 80px;
+      text-align: center;
     }
 
     .action-btn.swap { background: var(--accent); border-color: var(--accent2); }
@@ -321,14 +323,14 @@
 
     @media (pointer: coarse) {
       #game-screen {
-        padding: 6px 8px;
-        height: 100dvh;
+        padding: 4px 8px;
+        height: 100svh;
         overflow: hidden;
         justify-content: space-between;
       }
 
       .game-header {
-        margin-bottom: 4px;
+        margin-bottom: 2px;
       }
 
       .boards-wrapper {
@@ -354,7 +356,7 @@
       #mobile-controls {
         display: flex;
         flex-shrink: 0;
-        padding-bottom: 4px;
+        padding-bottom: env(safe-area-inset-bottom, 6px);
       }
 
       .controls-hint { display: none; }
@@ -416,6 +418,10 @@
 
   <!-- Mobile touch controls -->
   <div id="mobile-controls">
+    <div class="action-btns">
+      <button class="action-btn swap" id="mobile-swap">SWAP</button>
+      <button class="action-btn raise" id="mobile-raise">RAISE</button>
+    </div>
     <div class="dpad">
       <div></div>
       <button class="dpad-btn" id="dpad-up">▲</button>
@@ -426,10 +432,6 @@
       <div></div>
       <button class="dpad-btn" id="dpad-down">▼</button>
       <div></div>
-    </div>
-    <div class="action-btns">
-      <button class="action-btn swap" id="mobile-swap">SWAP</button>
-      <button class="action-btn raise" id="mobile-raise">RAISE</button>
     </div>
   </div>
 </div>
