@@ -1,4 +1,8 @@
 import { defineConfig } from 'vite';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -19,6 +23,10 @@ export default defineConfig({
       polyfill: true
     },
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        panelattack: resolve(__dirname, 'panelattack.html')
+      },
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
