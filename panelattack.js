@@ -635,6 +635,54 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
   window.addEventListener('keydown', handleKey);
   window.addEventListener('keyup', handleKey);
 
+  // Mobile d-pad with repeat while held
+  const mobileHeld = {};
+  function startMobileRepeat(action) {
+    if (mobileHeld[action]) return;
+    action();
+    const timer = { id: null };
+    const repeat = () => {
+      action();
+      timer.id = setTimeout(repeat, KEY_REPEAT_DELAY);
+    };
+    timer.id = setTimeout(repeat, KEY_INITIAL_DELAY);
+    mobileHeld[action] = timer;
+  }
+  function stopMobileRepeat(action) {
+    const timer = mobileHeld[action];
+    if (timer) { clearTimeout(timer.id); delete mobileHeld[action]; }
+  }
+
+  const dpadMap = {
+    'dpad-up':    () => { cursorRow = Math.max(0, cursorRow - 1); },
+    'dpad-down':  () => { cursorRow = Math.min(ROWS - 1, cursorRow + 1); },
+    'dpad-left':  () => { cursorCol = Math.max(0, cursorCol - 1); },
+    'dpad-right': () => { cursorCol = Math.min(COLS - 2, cursorCol + 1); },
+  };
+
+  Object.entries(dpadMap).forEach(([id, action]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const start = (e) => { e.preventDefault(); if (!gameOver) startMobileRepeat(action); };
+    const end   = () => stopMobileRepeat(action);
+    el.addEventListener('touchstart', start, { passive: false });
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+  });
+
+  const swapEl = document.getElementById('mobile-swap');
+  const raiseEl = document.getElementById('mobile-raise');
+  if (swapEl) {
+    swapEl.addEventListener('touchstart', (e) => { e.preventDefault(); if (!gameOver) swapAtCursor(); }, { passive: false });
+  }
+  if (raiseEl) {
+    raiseEl.addEventListener('touchstart', (e) => { e.preventDefault(); if (!gameOver) speedRise(); }, { passive: false });
+  }
+
+  function cleanupMobile() {
+    Object.keys(mobileHeld).forEach(k => stopMobileRepeat(k));
+  }
+
   function swapAtCursor() {
     if (gameOver) return;
     const r = cursorRow;
@@ -732,6 +780,7 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
     cancelAnimationFrame(animFrame);
     window.removeEventListener('keydown', handleKey);
     window.removeEventListener('keyup', handleKey);
+    cleanupMobile();
     oppUnsub();
     junkUnsub();
     // Clean up firebase game data

@@ -254,6 +254,75 @@
       margin-top: 10px;
       line-height: 2;
     }
+
+    /* ── MOBILE CONTROLS ───────────────────────── */
+    #mobile-controls {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      width: 100%;
+      max-width: 400px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .dpad {
+      display: grid;
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(3, 52px);
+      gap: 4px;
+    }
+
+    .dpad-btn {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border-radius: 6px;
+      touch-action: manipulation;
+      transition: background 0.1s, border-color 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .dpad-btn:active,
+    .dpad-btn.pressed { background: var(--accent); border-color: var(--accent2); }
+
+    .dpad-center { visibility: hidden; }
+
+    .action-btns {
+      display: flex;
+      gap: 16px;
+    }
+
+    .action-btn {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 8px;
+      padding: 14px 20px;
+      cursor: pointer;
+      border-radius: 6px;
+      touch-action: manipulation;
+      transition: background 0.1s, border-color 0.1s;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+    }
+
+    .action-btn.swap { background: var(--accent); border-color: var(--accent2); }
+    .action-btn.raise { background: var(--surface); border-color: var(--success); color: var(--success); }
+    .action-btn:active { opacity: 0.7; }
+
+    @media (pointer: coarse) {
+      #mobile-controls { display: flex; }
+      .controls-hint { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -306,6 +375,25 @@
     <div class="board-container">
       <div class="board-label enemy-label" id="enemy-label">OPPONENT</div>
       <canvas id="enemy-canvas" class="enemy-board-border" width="192" height="288"></canvas>
+    </div>
+  </div>
+
+  <!-- Mobile touch controls -->
+  <div id="mobile-controls">
+    <div class="dpad">
+      <div></div>
+      <button class="dpad-btn" id="dpad-up">▲</button>
+      <div></div>
+      <button class="dpad-btn" id="dpad-left">◀</button>
+      <div class="dpad-center"></div>
+      <button class="dpad-btn" id="dpad-right">▶</button>
+      <div></div>
+      <button class="dpad-btn" id="dpad-down">▼</button>
+      <div></div>
+    </div>
+    <div class="action-btns">
+      <button class="action-btn swap" id="mobile-swap">SWAP</button>
+      <button class="action-btn raise" id="mobile-raise">RAISE</button>
     </div>
   </div>
 </div>
