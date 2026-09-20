@@ -712,7 +712,7 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
     }
 
     // Rise
-    const riseRate = speedRising ? 4 : 1;
+    const riseRate = speedRising ? 4 : 0.2;
     riseOffset += riseRate;
     speedRising = false;
 
