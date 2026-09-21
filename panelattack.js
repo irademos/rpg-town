@@ -1021,9 +1021,47 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     return null;
   }
 
+  function botFindJunkBreakSwap(grid) {
+    let bestScore = 0, bestRow = -1, bestCol = -1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue;
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const matched = findMatches(grid);
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+        if (matched.size === 0) continue;
+        let adjacentToJunk = false;
+        for (const key of matched) {
+          const [mr, mc] = key.split(',').map(Number);
+          for (const [nr, nc] of [[mr-1,mc],[mr+1,mc],[mr,mc-1],[mr,mc+1]]) {
+            if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc]?.junk) {
+              adjacentToJunk = true;
+              break;
+            }
+          }
+          if (adjacentToJunk) break;
+        }
+        if (adjacentToJunk && matched.size > bestScore) {
+          bestScore = matched.size;
+          bestRow = r;
+          bestCol = c;
+        }
+      }
+    }
+    return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
+  }
+
   function botFindBestSwap(grid) {
     const survivalSwap = botFindSurvivalSwap(grid);
     if (survivalSwap) return survivalSwap;
+
+    // Prioritize breaking junk blocks by matching adjacent to them
+    const junkBreakSwap = botFindJunkBreakSwap(grid);
+    if (junkBreakSwap) return junkBreakSwap;
 
     let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
     let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;

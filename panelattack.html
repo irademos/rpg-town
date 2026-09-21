@@ -423,7 +423,7 @@
         inset: 0;
         padding: 4px 8px;
         overflow: hidden;
-        justify-content: space-between;
+        justify-content: flex-start;
       }
 
       .game-header {
@@ -433,7 +433,6 @@
       .boards-wrapper {
         flex-wrap: nowrap;
         gap: 6px;
-        flex: 1;
         align-items: center;
       }
 
@@ -453,6 +452,7 @@
       #mobile-controls {
         display: flex;
         flex-shrink: 0;
+        margin-top: 8px;
         padding-bottom: env(safe-area-inset-bottom, 6px);
       }
 
