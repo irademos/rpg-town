@@ -255,6 +255,48 @@
       line-height: 2;
     }
 
+    /* ── SETTINGS MODAL ───────────────────── */
+    .settings-modal {
+      background: var(--surface);
+      border: 2px solid var(--accent);
+      padding: 28px 24px;
+      max-width: 420px;
+      width: 90%;
+    }
+
+    .settings-modal h3 { font-size: 13px; color: var(--accent2); margin-bottom: 20px; }
+
+    .settings-group { margin-bottom: 20px; }
+
+    .settings-group-label {
+      font-size: 9px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      letter-spacing: 1px;
+    }
+
+    .settings-options {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .settings-option {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 9px;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .settings-option.active {
+      border-color: var(--accent2);
+      color: var(--accent2);
+    }
+
     /* ── VIEW TOGGLE ───────────────────────── */
     #view-btn {
       background: var(--surface);
@@ -433,6 +475,7 @@
   <div id="lobby-error" style="display:none;color:var(--danger);font-size:9px;margin-bottom:16px;max-width:560px;text-align:center;line-height:1.8;"></div>
 
   <div style="margin-bottom:20px;display:flex;flex-direction:column;align-items:center;gap:10px;">
+    <button class="btn secondary" id="settings-btn" style="font-size:9px;padding:8px 16px;">⚙ SETTINGS</button>
     <div style="display:flex;gap:8px;align-items:center;">
       <span style="font-size:9px;color:var(--text-dim);letter-spacing:1px;">DIFFICULTY</span>
       <label style="font-size:9px;cursor:pointer;"><input type="radio" name="bot-difficulty" value="easy"> EASY</label>
@@ -447,6 +490,34 @@
     <h2>Players Online</h2>
     <div class="player-list" id="player-list">
       <div class="empty-lobby">No players online yet…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── SETTINGS MODAL ─────────────────────────── -->
+<div class="modal-backdrop" id="settings-modal">
+  <div class="settings-modal">
+    <h3>⚙ SETTINGS</h3>
+
+    <div class="settings-group">
+      <div class="settings-group-label">DEFAULT VIEW</div>
+      <div class="settings-options">
+        <button class="settings-option" data-setting="view" data-value="default">DEFAULT</button>
+        <button class="settings-option" data-setting="view" data-value="focused">FOCUSED</button>
+        <button class="settings-option" data-setting="view" data-value="solo">SOLO</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-label">BLOCK STYLE</div>
+      <div class="settings-options">
+        <button class="settings-option" data-setting="blocks" data-value="classic">CLASSIC</button>
+        <button class="settings-option" data-setting="blocks" data-value="emoji">EMOJI</button>
+      </div>
+    </div>
+
+    <div style="text-align:center;margin-top:8px;">
+      <button class="btn cyan" id="settings-close-btn">DONE</button>
     </div>
   </div>
 </div>
@@ -521,18 +592,88 @@
 <script>
   (() => {
     const VIEWS = [
-      { cls: '',             label: '👁 DEFAULT' },
-      { cls: 'view-focused', label: '🔍 FOCUSED' },
-      { cls: 'view-solo',    label: '🎯 SOLO'    },
+      { cls: '',             label: '👁 DEFAULT',  key: 'default'  },
+      { cls: 'view-focused', label: '🔍 FOCUSED',  key: 'focused'  },
+      { cls: 'view-solo',    label: '🎯 SOLO',     key: 'solo'     },
     ];
+
+    function loadSettings() {
+      return {
+        view:   localStorage.getItem('pa_default_view')   || 'default',
+        blocks: localStorage.getItem('pa_block_style')    || 'classic',
+      };
+    }
+
+    function saveSettings(settings) {
+      localStorage.setItem('pa_default_view',  settings.view);
+      localStorage.setItem('pa_block_style',   settings.blocks);
+    }
+
+    // ── Settings modal ──────────────────────────────
+    const settingsModal = document.getElementById('settings-modal');
+    const settingsBtn   = document.getElementById('settings-btn');
+    const settingsClose = document.getElementById('settings-close-btn');
+
+    function refreshSettingsUI() {
+      const s = loadSettings();
+      document.querySelectorAll('.settings-option').forEach(btn => {
+        const match = btn.dataset.setting === 'view'
+          ? btn.dataset.value === s.view
+          : btn.dataset.value === s.blocks;
+        btn.classList.toggle('active', match);
+      });
+    }
+
+    settingsBtn.addEventListener('click', () => {
+      refreshSettingsUI();
+      settingsModal.classList.add('open');
+    });
+
+    settingsClose.addEventListener('click', () => {
+      settingsModal.classList.remove('open');
+    });
+
+    settingsModal.addEventListener('click', e => {
+      if (e.target === settingsModal) settingsModal.classList.remove('open');
+    });
+
+    document.querySelectorAll('.settings-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = loadSettings();
+        s[btn.dataset.setting] = btn.dataset.value;
+        saveSettings(s);
+        refreshSettingsUI();
+      });
+    });
+
+    // ── View toggle in game ─────────────────────────
+    const viewBtn = document.getElementById('view-btn');
+    const screen  = document.getElementById('game-screen');
+
+    function getDefaultViewIdx() {
+      const v = loadSettings().view;
+      return VIEWS.findIndex(x => x.key === v) || 0;
+    }
+
     let current = 0;
-    const btn = document.getElementById('view-btn');
-    const screen = document.getElementById('game-screen');
-    btn.addEventListener('click', () => {
+
+    // Apply starting view when game screen becomes visible
+    const observer = new MutationObserver(() => {
+      if (screen.style.display !== 'none') {
+        // Reset to default view from settings
+        if (VIEWS[current].cls) screen.classList.remove(VIEWS[current].cls);
+        current = getDefaultViewIdx();
+        if (VIEWS[current].cls) screen.classList.add(VIEWS[current].cls);
+        viewBtn.textContent = VIEWS[current].label;
+      }
+    });
+    observer.observe(screen, { attributes: true, attributeFilter: ['style'] });
+
+    viewBtn.addEventListener('click', () => {
       if (VIEWS[current].cls) screen.classList.remove(VIEWS[current].cls);
       current = (current + 1) % VIEWS.length;
       if (VIEWS[current].cls) screen.classList.add(VIEWS[current].cls);
-      btn.textContent = VIEWS[current].label;
+      viewBtn.textContent = VIEWS[current].label;
     });
   })();
 </script>
