@@ -255,6 +255,60 @@
       line-height: 2;
     }
 
+    /* ── VIEW TOGGLE ───────────────────────── */
+    #view-btn {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    #view-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+
+    /* focused: my board bigger, enemy smaller */
+    #game-screen.view-focused .boards-wrapper {
+      align-items: center;
+    }
+    #game-screen.view-focused #my-canvas {
+      --scale: 1.4;
+    }
+    #game-screen.view-focused .board-container:first-child canvas {
+      width: calc(192px * 1.4);
+      height: calc(416px * 1.4);
+    }
+    #game-screen.view-focused .board-container:last-child canvas {
+      width: calc(192px * 0.65);
+      height: calc(416px * 0.65);
+    }
+
+    /* solo: hide enemy board */
+    #game-screen.view-solo .board-container:last-child {
+      display: none;
+    }
+    #game-screen.view-solo .board-container:first-child canvas {
+      width: calc(192px * 1.6);
+      height: calc(416px * 1.6);
+    }
+
+    @media (pointer: coarse) {
+      #game-screen.view-focused .board-container:first-child canvas {
+        width: 62vw;
+        height: calc(62vw * 1.5);
+      }
+      #game-screen.view-focused .board-container:last-child canvas {
+        width: 28vw;
+        height: calc(28vw * 1.5);
+      }
+      #game-screen.view-solo .board-container:first-child canvas {
+        width: 72vw;
+        height: calc(72vw * 1.5);
+      }
+    }
+
     /* ── MOBILE CONTROLS ───────────────────────── */
     #mobile-controls {
       display: none;
@@ -413,7 +467,10 @@
 <div id="game-screen">
   <div class="game-header">
     <span class="game-title">PANEL ATTACK</span>
-    <button class="btn secondary" id="forfeit-btn">Forfeit</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="view-btn" title="Toggle view">👁 DEFAULT</button>
+      <button class="btn secondary" id="forfeit-btn">Forfeit</button>
+    </div>
   </div>
 
   <div class="boards-wrapper">
@@ -461,5 +518,23 @@
 </div>
 
 <script type="module" src="/panelattack.js"></script>
+<script>
+  (() => {
+    const VIEWS = [
+      { cls: '',             label: '👁 DEFAULT' },
+      { cls: 'view-focused', label: '🔍 FOCUSED' },
+      { cls: 'view-solo',    label: '🎯 SOLO'    },
+    ];
+    let current = 0;
+    const btn = document.getElementById('view-btn');
+    const screen = document.getElementById('game-screen');
+    btn.addEventListener('click', () => {
+      if (VIEWS[current].cls) screen.classList.remove(VIEWS[current].cls);
+      current = (current + 1) % VIEWS.length;
+      if (VIEWS[current].cls) screen.classList.add(VIEWS[current].cls);
+      btn.textContent = VIEWS[current].label;
+    });
+  })();
+</script>
 </body>
 </html>
