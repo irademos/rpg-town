@@ -995,6 +995,10 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       .sort((a, b) => a.t - b.t);
 
     for (const { c: dangerCol, t: colTop } of dangerCols) {
+      // If the top of this column is junk, moving blocks below it doesn't reduce column height.
+      // Skip it and let junk-break logic handle it instead.
+      if (grid[colTop]?.[dangerCol]?.junk) continue;
+
       // Try every row near the top of this column
       for (let r = colTop; r < colTop + 6 && r < ROWS; r++) {
         const block = grid[r][dangerCol];
@@ -1091,7 +1095,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
-    if (bestSetupRow >= 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+    if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
     return null;
   }
 
