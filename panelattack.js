@@ -1059,6 +1059,25 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
   }
 
+  // Find a swap that doesn't immediately match adjacent to junk, but after making it,
+  // a direct junk-break swap becomes available (2-ply lookahead for junk clearing).
+  function botFindJunkBreakSetupSwap(grid) {
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue;
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const followUp = botFindJunkBreakSwap(grid);
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+        if (followUp) return { row: r, col: c, score: 1 };
+      }
+    }
+    return null;
+  }
+
   function botFindBestSwap(grid) {
     const survivalSwap = botFindSurvivalSwap(grid);
     if (survivalSwap) return survivalSwap;
@@ -1066,6 +1085,10 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     // Prioritize breaking junk blocks by matching adjacent to them
     const junkBreakSwap = botFindJunkBreakSwap(grid);
     if (junkBreakSwap) return junkBreakSwap;
+
+    // Fall back to a setup swap that enables a junk-break on the next move
+    const junkBreakSetupSwap = botFindJunkBreakSetupSwap(grid);
+    if (junkBreakSetupSwap) return junkBreakSetupSwap;
 
     let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
     let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;
@@ -1095,6 +1118,22 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
+
+    // No immediate match — try multi-step slide search (throttled) before falling back to setup
+    botMultiStepTick++;
+    if (botMultiStepTick >= BOT_MULTISTEP_RATE) {
+      botMultiStepTick = 0;
+      botMultiStepTarget = botFindMultiStepSwap(grid);
+    }
+    if (botMultiStepTarget) {
+      const { row: mr, col: mc } = botMultiStepTarget;
+      const ma = grid[mr]?.[mc], mb = grid[mr]?.[mc + 1];
+      if (!ma?.junk && !mb?.junk && !ma?.clearing && !mb?.clearing && (ma || mb)) {
+        return botMultiStepTarget;
+      }
+      botMultiStepTarget = null;
+    }
+
     if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
     return null;
   }
@@ -1119,9 +1158,60 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     return null;
   }
 
+  // Find the first swap in a multi-step slide that eventually creates a match.
+  // Simulates moving a block up to MAX_SLIDE columns left or right one swap at a time,
+  // checking for a match after each intermediate step. Returns the *first* swap in the
+  // sequence (i.e. the immediate swap to make now), not the final destination.
+  function botFindMultiStepSwap(grid, maxSlide = 4) {
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS; c++) {
+        const block = grid[r][c];
+        if (!block || block.junk || block.clearing) continue;
+
+        // Try sliding right
+        {
+          const tmp = grid[r].slice();
+          let firstSwapCol = -1;
+          for (let steps = 1; steps <= maxSlide && c + steps < COLS; steps++) {
+            const neighbor = tmp[c + steps - 1 + 1]; // cell being swapped into
+            if (neighbor?.junk || neighbor?.clearing) break;
+            // perform swap on tmp row
+            [tmp[c + steps - 1], tmp[c + steps]] = [tmp[c + steps], tmp[c + steps - 1]];
+            if (firstSwapCol === -1) firstSwapCol = c + steps - 1;
+            // check for match after this step
+            const testGrid = grid.map((row, ri) => ri === r ? tmp.slice() : row);
+            if (findMatches(testGrid).size > 0) {
+              return { row: r, col: firstSwapCol, score: 1 };
+            }
+          }
+        }
+
+        // Try sliding left
+        {
+          const tmp = grid[r].slice();
+          let firstSwapCol = -1;
+          for (let steps = 1; steps <= maxSlide && c - steps >= 0; steps++) {
+            const neighbor = tmp[c - steps + 1 - 1]; // cell being swapped into
+            if (neighbor?.junk || neighbor?.clearing) break;
+            [tmp[c - steps + 1], tmp[c - steps]] = [tmp[c - steps], tmp[c - steps + 1]];
+            if (firstSwapCol === -1) firstSwapCol = c - steps;
+            const testGrid = grid.map((row, ri) => ri === r ? tmp.slice() : row);
+            if (findMatches(testGrid).size > 0) {
+              return { row: r, col: firstSwapCol, score: 1 };
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   let botTarget = null;
   let botDropTick = 0;
   const BOT_DROP_RATE = 8; // force a drop-flatten move every N think ticks
+  let botMultiStepTick = 0;
+  let botMultiStepTarget = null; // cached result from last multi-step search
+  const BOT_MULTISTEP_RATE = 10; // re-run multi-step search every N think ticks
 
   function botThink() {
     // Survival threat always overrides current target
@@ -1164,6 +1254,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       botGrid[botCursorRow][botCursorCol + 1] = a || null;
     }
     botTarget = null;
+    botMultiStepTarget = null;       // board changed, invalidate multi-step cache
+    botMultiStepTick = BOT_MULTISTEP_RATE; // search again immediately next tick if needed
 
     // Extreme: speed-raise only when board is safe
     if (BOT_SPEED_RISE && !botFindSurvivalSwap(botGrid) && Math.random() < 0.03) {
