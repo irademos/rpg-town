@@ -82,6 +82,7 @@ document.getElementById('vs-bot-btn').addEventListener('click', () => {
   const difficulty = difficultyEl ? difficultyEl.value : 'medium';
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
+  document.body.classList.add('in-game');
   document.getElementById('my-label').textContent = myName;
   document.getElementById('enemy-label').textContent = `BOT (${difficulty.toUpperCase()})`;
   gameSession = createBotGameSession({
@@ -231,6 +232,7 @@ let gameSession = null;
 function startGame(myPlayerId, oppId, oppName, isHost) {
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
+  document.body.classList.add('in-game');
 
   document.getElementById('my-label').textContent = myName || 'YOU';
   document.getElementById('enemy-label').textContent = oppName || 'OPPONENT';
@@ -290,6 +292,7 @@ document.getElementById('forfeit-btn').addEventListener('click', () => {
 function returnToLobby() {
   gameScreen.style.display = 'none';
   lobbyScreen.style.display = 'flex';
+  document.body.classList.remove('in-game');
 }
 
 // ── Board state helpers ───────────────────────────────────────
