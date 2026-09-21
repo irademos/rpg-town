@@ -1059,6 +1059,25 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
   }
 
+  // Find a swap that doesn't immediately match adjacent to junk, but after making it,
+  // a direct junk-break swap becomes available (2-ply lookahead for junk clearing).
+  function botFindJunkBreakSetupSwap(grid) {
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue;
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const followUp = botFindJunkBreakSwap(grid);
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+        if (followUp) return { row: r, col: c, score: 1 };
+      }
+    }
+    return null;
+  }
+
   function botFindBestSwap(grid) {
     const survivalSwap = botFindSurvivalSwap(grid);
     if (survivalSwap) return survivalSwap;
@@ -1066,6 +1085,10 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     // Prioritize breaking junk blocks by matching adjacent to them
     const junkBreakSwap = botFindJunkBreakSwap(grid);
     if (junkBreakSwap) return junkBreakSwap;
+
+    // Fall back to a setup swap that enables a junk-break on the next move
+    const junkBreakSetupSwap = botFindJunkBreakSetupSwap(grid);
+    if (junkBreakSetupSwap) return junkBreakSetupSwap;
 
     let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
     let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;
