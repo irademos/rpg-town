@@ -1118,6 +1118,22 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
+
+    // No immediate match — try multi-step slide search (throttled) before falling back to setup
+    botMultiStepTick++;
+    if (botMultiStepTick >= BOT_MULTISTEP_RATE) {
+      botMultiStepTick = 0;
+      botMultiStepTarget = botFindMultiStepSwap(grid);
+    }
+    if (botMultiStepTarget) {
+      const { row: mr, col: mc } = botMultiStepTarget;
+      const ma = grid[mr]?.[mc], mb = grid[mr]?.[mc + 1];
+      if (!ma?.junk && !mb?.junk && !ma?.clearing && !mb?.clearing && (ma || mb)) {
+        return botMultiStepTarget;
+      }
+      botMultiStepTarget = null;
+    }
+
     if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
     return null;
   }
@@ -1213,26 +1229,6 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
 
     if (!botTarget) botTarget = botFindBestSwap(botGrid);
-
-    // If still no target, fall back to multi-step slide search (throttled)
-    if (!botTarget) {
-      botMultiStepTick++;
-      if (botMultiStepTick >= BOT_MULTISTEP_RATE) {
-        botMultiStepTick = 0;
-        botMultiStepTarget = botFindMultiStepSwap(botGrid);
-      }
-      if (botMultiStepTarget) {
-        // Validate cached result is still usable
-        const { row: mr, col: mc } = botMultiStepTarget;
-        const ma = botGrid[mr]?.[mc], mb = botGrid[mr]?.[mc + 1];
-        if (!ma?.junk && !mb?.junk && !ma?.clearing && !mb?.clearing && (ma || mb)) {
-          botTarget = botMultiStepTarget;
-        } else {
-          botMultiStepTarget = null;
-        }
-      }
-    }
-
     if (!botTarget) return;
 
     const { row, col } = botTarget;
@@ -1258,7 +1254,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       botGrid[botCursorRow][botCursorCol + 1] = a || null;
     }
     botTarget = null;
-    botMultiStepTarget = null; // board changed, invalidate multi-step cache
+    botMultiStepTarget = null;       // board changed, invalidate multi-step cache
+    botMultiStepTick = BOT_MULTISTEP_RATE; // search again immediately next tick if needed
 
     // Extreme: speed-raise only when board is safe
     if (BOT_SPEED_RISE && !botFindSurvivalSwap(botGrid) && Math.random() < 0.03) {
