@@ -231,7 +231,6 @@ let gameSession = null;
 function startGame(myPlayerId, oppId, oppName, isHost) {
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
-
   document.getElementById('my-label').textContent = myName || 'YOU';
   document.getElementById('enemy-label').textContent = oppName || 'OPPONENT';
 
@@ -1220,7 +1219,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     cursorRow,
     cursorCol,
     junkQueue: myJunkQueue,
-    sendJunk: (n) => { botJunkQueue += n; }
+    sendJunk: (n) => { botState.junkQueue += n; }
   };
 
   const botState = {
@@ -1264,7 +1263,6 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     // Sync state back
     cursorRow = playerState.cursorRow;
     myJunkQueue = playerState.junkQueue;
-    botJunkQueue = botState.junkQueue;
 
     if (playerResult === 'lose') { gameOver = true; cleanup(); onGameOver(false); return; }
     if (botResult === 'lose') { gameOver = true; cleanup(); onGameOver(true); return; }
