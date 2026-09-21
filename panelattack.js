@@ -1096,6 +1096,28 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
     if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+
+    // Flatten: move a block from a taller-than-average column sideways into an empty
+    // adjacent cell that also has empty below, so it falls and evens out the board.
+    const tops = Array.from({ length: COLS }, (_, c) => getColumnTopRow(grid, c));
+    const avgTop = tops.reduce((a, b) => a + b, 0) / COLS;
+    for (let c = 0; c < COLS; c++) {
+      if (tops[c] >= avgTop) continue; // lower topRow = taller column; skip short ones
+      const r = tops[c];
+      if (r >= ROWS) continue;
+      const block = grid[r][c];
+      if (!block || block.junk || block.clearing) continue;
+      // Try moving left: swap at (r, c-1) puts block into col c-1
+      if (c > 0 && grid[r][c - 1] === null && (r + 1 >= ROWS || grid[r + 1][c - 1] === null)) {
+        const other = grid[r][c - 1]; // null
+        if (!other?.junk && !other?.clearing) return { row: r, col: c - 1, score: 1 };
+      }
+      // Try moving right: swap at (r, c) puts block into col c+1
+      if (c < COLS - 1 && grid[r][c + 1] === null && (r + 1 >= ROWS || grid[r + 1][c + 1] === null)) {
+        const other = grid[r][c + 1]; // null
+        if (!other?.junk && !other?.clearing) return { row: r, col: c, score: 1 };
+      }
+    }
     return null;
   }
 
