@@ -529,7 +529,7 @@
     const btn = document.getElementById('view-btn');
     const screen = document.getElementById('game-screen');
     btn.addEventListener('click', () => {
-      screen.classList.remove(VIEWS[current].cls);
+      if (VIEWS[current].cls) screen.classList.remove(VIEWS[current].cls);
       current = (current + 1) % VIEWS.length;
       if (VIEWS[current].cls) screen.classList.add(VIEWS[current].cls);
       btn.textContent = VIEWS[current].label;
