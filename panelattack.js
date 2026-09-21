@@ -1096,37 +1096,47 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
     if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+    return null;
+  }
 
-    // Flatten: move a block from a taller-than-average column sideways into an empty
-    // adjacent cell that also has empty below, so it falls and evens out the board.
-    const tops = Array.from({ length: COLS }, (_, c) => getColumnTopRow(grid, c));
-    const avgTop = tops.reduce((a, b) => a + b, 0) / COLS;
-    for (let c = 0; c < COLS; c++) {
-      if (tops[c] >= avgTop) continue; // lower topRow = taller column; skip short ones
-      const r = tops[c];
-      if (r >= ROWS) continue;
-      const block = grid[r][c];
-      if (!block || block.junk || block.clearing) continue;
-      // Try moving left: swap at (r, c-1) puts block into col c-1
-      if (c > 0 && grid[r][c - 1] === null && (r + 1 >= ROWS || grid[r + 1][c - 1] === null)) {
-        const other = grid[r][c - 1]; // null
-        if (!other?.junk && !other?.clearing) return { row: r, col: c - 1, score: 1 };
-      }
-      // Try moving right: swap at (r, c) puts block into col c+1
-      if (c < COLS - 1 && grid[r][c + 1] === null && (r + 1 >= ROWS || grid[r + 1][c + 1] === null)) {
-        const other = grid[r][c + 1]; // null
-        if (!other?.junk && !other?.clearing) return { row: r, col: c, score: 1 };
+  // Find any symbol block that can be swapped sideways into an empty cell that has
+  // empty below it, so the block drops down — scans top-down to prefer high blocks.
+  function botFindDropSwap(grid) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const block = grid[r][c];
+        if (!block || block.junk || block.clearing) continue;
+        // Try moving left into col c-1
+        if (c > 0 && grid[r][c - 1] === null && (r + 1 >= ROWS || grid[r + 1][c - 1] === null)) {
+          return { row: r, col: c - 1, score: 1 };
+        }
+        // Try moving right into col c+1
+        if (c < COLS - 1 && grid[r][c + 1] === null && (r + 1 >= ROWS || grid[r + 1][c + 1] === null)) {
+          return { row: r, col: c, score: 1 };
+        }
       }
     }
     return null;
   }
 
   let botTarget = null;
+  let botDropTick = 0;
+  const BOT_DROP_RATE = 8; // force a drop-flatten move every N think ticks
 
   function botThink() {
     // Survival threat always overrides current target
     const survivalSwap = botFindSurvivalSwap(botGrid);
     if (survivalSwap) botTarget = survivalSwap;
+
+    // Periodically override with a drop move to keep the board flat
+    if (!survivalSwap) {
+      botDropTick++;
+      if (botDropTick >= BOT_DROP_RATE) {
+        botDropTick = 0;
+        const dropSwap = botFindDropSwap(botGrid);
+        if (dropSwap) { botTarget = dropSwap; }
+      }
+    }
 
     if (!botTarget) botTarget = botFindBestSwap(botGrid);
     if (!botTarget) return;
