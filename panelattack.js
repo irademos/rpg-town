@@ -995,6 +995,10 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       .sort((a, b) => a.t - b.t);
 
     for (const { c: dangerCol, t: colTop } of dangerCols) {
+      // If the top of this column is junk, moving blocks below it doesn't reduce column height.
+      // Skip it and let junk-break logic handle it instead.
+      if (grid[colTop]?.[dangerCol]?.junk) continue;
+
       // Try every row near the top of this column
       for (let r = colTop; r < colTop + 6 && r < ROWS; r++) {
         const block = grid[r][dangerCol];
@@ -1021,9 +1025,47 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     return null;
   }
 
+  function botFindJunkBreakSwap(grid) {
+    let bestScore = 0, bestRow = -1, bestCol = -1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS - 1; c++) {
+        const a = grid[r][c], b = grid[r][c + 1];
+        if (a?.junk || b?.junk || a?.clearing || b?.clearing) continue;
+        if (!a && !b) continue;
+        grid[r][c] = b || null;
+        grid[r][c + 1] = a || null;
+        const matched = findMatches(grid);
+        grid[r][c] = a;
+        grid[r][c + 1] = b;
+        if (matched.size === 0) continue;
+        let adjacentToJunk = false;
+        for (const key of matched) {
+          const [mr, mc] = key.split(',').map(Number);
+          for (const [nr, nc] of [[mr-1,mc],[mr+1,mc],[mr,mc-1],[mr,mc+1]]) {
+            if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc]?.junk) {
+              adjacentToJunk = true;
+              break;
+            }
+          }
+          if (adjacentToJunk) break;
+        }
+        if (adjacentToJunk && matched.size > bestScore) {
+          bestScore = matched.size;
+          bestRow = r;
+          bestCol = c;
+        }
+      }
+    }
+    return bestScore > 0 ? { row: bestRow, col: bestCol, score: bestScore } : null;
+  }
+
   function botFindBestSwap(grid) {
     const survivalSwap = botFindSurvivalSwap(grid);
     if (survivalSwap) return survivalSwap;
+
+    // Prioritize breaking junk blocks by matching adjacent to them
+    const junkBreakSwap = botFindJunkBreakSwap(grid);
+    if (junkBreakSwap) return junkBreakSwap;
 
     let bestMatchScore = -1, bestMatchRow = -1, bestMatchCol = -1;
     let bestSetupScore = -1, bestSetupRow = -1, bestSetupCol = -1;
@@ -1053,16 +1095,48 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     }
 
     if (bestMatchScore > 0) return { row: bestMatchRow, col: bestMatchCol, score: bestMatchScore };
-    if (bestSetupRow >= 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+    if (bestSetupScore > 0) return { row: bestSetupRow, col: bestSetupCol, score: bestSetupScore };
+    return null;
+  }
+
+  // Find any symbol block that can be swapped sideways into an empty cell that has
+  // empty below it, so the block drops down — scans top-down to prefer high blocks.
+  function botFindDropSwap(grid) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const block = grid[r][c];
+        if (!block || block.junk || block.clearing) continue;
+        // Try moving left into col c-1
+        if (c > 0 && grid[r][c - 1] === null && (r + 1 >= ROWS || grid[r + 1][c - 1] === null)) {
+          return { row: r, col: c - 1, score: 1 };
+        }
+        // Try moving right into col c+1
+        if (c < COLS - 1 && grid[r][c + 1] === null && (r + 1 >= ROWS || grid[r + 1][c + 1] === null)) {
+          return { row: r, col: c, score: 1 };
+        }
+      }
+    }
     return null;
   }
 
   let botTarget = null;
+  let botDropTick = 0;
+  const BOT_DROP_RATE = 8; // force a drop-flatten move every N think ticks
 
   function botThink() {
     // Survival threat always overrides current target
     const survivalSwap = botFindSurvivalSwap(botGrid);
     if (survivalSwap) botTarget = survivalSwap;
+
+    // Periodically override with a drop move to keep the board flat
+    if (!survivalSwap) {
+      botDropTick++;
+      if (botDropTick >= BOT_DROP_RATE) {
+        botDropTick = 0;
+        const dropSwap = botFindDropSwap(botGrid);
+        if (dropSwap) { botTarget = dropSwap; }
+      }
+    }
 
     if (!botTarget) botTarget = botFindBestSwap(botGrid);
     if (!botTarget) return;
