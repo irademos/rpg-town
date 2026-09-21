@@ -31,6 +31,7 @@ const COLS = 6;
 const ROWS = 12;
 const CELL = 32;
 const SYMBOLS = ['★', '●', '▲', '♦', '✿', '♠'];
+const EMOJI_SYMBOLS = ['🐱', '🐶', '🐸', '🦊', '🐼', '🐨'];
 const COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7', '#ec4899'];
 const JUNK_COLOR = '#44403c';
 const JUNK_BORDER = '#78716c';
@@ -482,8 +483,14 @@ function addJunk(grid, count) {
   }
 }
 
+// ── Settings helper ───────────────────────────────────────────
+function getBlockStyle() {
+  return localStorage.getItem('pa_block_style') || 'classic';
+}
+
 // ── Render board ──────────────────────────────────────────────
 function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, nextRow) {
+  const emojiMode = getBlockStyle() === 'emoji';
   ctx.fillStyle = BG_COLOR;
   ctx.fillRect(0, 0, COLS * CELL, (ROWS + 1) * CELL);
 
@@ -513,16 +520,37 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
       const y = r * CELL - riseOffset;
 
       if (block.junk) {
-        ctx.fillStyle = JUNK_COLOR;
-        ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
-        ctx.strokeStyle = JUNK_BORDER;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x + 2, y + 2, CELL - 4, CELL - 4);
-        ctx.fillStyle = '#92400e';
-        ctx.font = `bold ${CELL * 0.45}px monospace`;
+        if (emojiMode) {
+          ctx.fillStyle = '#2a1a00';
+          ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+          ctx.font = `${CELL * 0.72}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('💀', x + CELL / 2, y + CELL / 2 + 1);
+        } else {
+          ctx.fillStyle = JUNK_COLOR;
+          ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+          ctx.strokeStyle = JUNK_BORDER;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x + 2, y + 2, CELL - 4, CELL - 4);
+          ctx.fillStyle = '#92400e';
+          ctx.font = `bold ${CELL * 0.45}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('✖', x + CELL / 2, y + CELL / 2);
+        }
+      } else if (emojiMode) {
+        const alpha = block.clearing ? (block.clearTimer / CLEAR_DELAY) : 1;
+        ctx.globalAlpha = alpha;
+        if (block.clearing && Math.floor(block.clearTimer / 4) % 2 === 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.6)';
+          ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+        }
+        ctx.font = `${CELL * 0.82}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('✖', x + CELL / 2, y + CELL / 2);
+        ctx.fillText(EMOJI_SYMBOLS[block.sym] || '🐱', x + CELL / 2, y + CELL / 2 + 1);
+        ctx.globalAlpha = 1;
       } else {
         const col = COLORS[block.sym] || '#fff';
         const alpha = block.clearing ? (block.clearTimer / CLEAR_DELAY) : 1;
@@ -562,14 +590,21 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
       if (!block) continue;
       const x = c * CELL;
       const y = ROWS * CELL - riseOffset;
-      const col = COLORS[block.sym] || '#fff';
-      ctx.fillStyle = col;
-      ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
-      ctx.fillStyle = '#fff';
-      ctx.font = `${CELL * 0.4}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(SYMBOLS[block.sym], x + CELL / 2, y + CELL / 2);
+      if (emojiMode) {
+        ctx.font = `${CELL * 0.82}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(EMOJI_SYMBOLS[block.sym] || '🐱', x + CELL / 2, y + CELL / 2 + 1);
+      } else {
+        const col = COLORS[block.sym] || '#fff';
+        ctx.fillStyle = col;
+        ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+        ctx.fillStyle = '#fff';
+        ctx.font = `${CELL * 0.4}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(SYMBOLS[block.sym], x + CELL / 2, y + CELL / 2);
+      }
     }
     ctx.globalAlpha = 1;
   }
