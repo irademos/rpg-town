@@ -39,10 +39,15 @@ const BG_COLOR = '#0a0a1a';
 const GRID_COLOR = '#12122a';
 const CURSOR_COLOR = '#06b6d4';
 const TICK_MS = 80;
-const RAISE_TICKS = 80;
-const FALL_DELAY = 3;
-const CLEAR_DELAY = 30;
-const JUNK_BREAK_DELAY = 15;
+// Frame values converted from 60 FPS: divide by 4.8 (80ms tick = 4.8 frames)
+const CLEAR_TICKS = 10;           // 49 frames total (36 flash + 13 face)
+const POP_STAGGER_TICKS = 2;      // 8 frames between pops
+const HOVER_TICKS = 2;            // 9 frames hover after support removed
+const STOP_COMBO_TICKS = 25;      // 120 frames stop time for normal combo
+const STOP_CHAIN_TICKS = 38;      // 180 frames stop time for chain
+const STOP_TOPOUT_TICKS = 88;     // 420 frames stop time when topped out
+const JUNK_TELEGRAPH_TICKS = 16;  // 78 frames garbage telegraph
+const RISE_TICKS_PER_ROW = 99;    // speed 11: 474 frames/row
 
 let junkSetCounter = 0;
 
@@ -299,7 +304,7 @@ function emptyGrid() {
 
 function randomBlock() {
   const idx = Math.floor(Math.random() * SYMBOLS.length);
-  return { sym: idx, junk: false, clearing: false, clearTimer: 0, fallDelay: 0 };
+  return { sym: idx, junk: false, clearing: false, clearTimer: 0, hover: false, hoverTimer: 0 };
 }
 
 function fillInitialRows(grid, count) {
@@ -374,11 +379,17 @@ function findMatches(grid) {
 function countMatchSize(matched) { return matched.size; }
 
 function markClearing(grid, matched) {
-  matched.forEach(key => {
+  // Sort for consistent stagger order (row then col)
+  const keys = [...matched].sort((a, b) => {
+    const [ar, ac] = a.split(',').map(Number);
+    const [br, bc] = b.split(',').map(Number);
+    return ar !== br ? ar - br : ac - bc;
+  });
+  keys.forEach((key, i) => {
     const [r, c] = key.split(',').map(Number);
     if (grid[r][c]) {
       grid[r][c].clearing = true;
-      grid[r][c].clearTimer = CLEAR_DELAY;
+      grid[r][c].clearTimer = CLEAR_TICKS + i * POP_STAGGER_TICKS;
     }
   });
 }
@@ -394,12 +405,38 @@ function breakAdjacentJunk(grid, matched) {
     });
   });
   if (setsToBreak.size === 0) return;
-  // Convert all blocks in each broken set to playable symbol blocks
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const block = grid[r][c];
-      if (block?.junk && setsToBreak.has(block.junkSetId)) {
-        grid[r][c] = { sym: Math.floor(Math.random() * SYMBOLS.length), junk: false, clearing: false, clearTimer: 0, fallDelay: 0 };
+
+  // Peel only the BOTTOM row of each adjacent junk set (one row at a time)
+  for (const setId of setsToBreak) {
+    const setCells = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r][c]?.junk && grid[r][c].junkSetId === setId) {
+          setCells.push({ r, c });
+        }
+      }
+    }
+    if (setCells.length === 0) continue;
+
+    // Bottommost row of the set
+    const maxRow = Math.max(...setCells.map(({ r }) => r));
+    const bottomCells = setCells.filter(({ r }) => r === maxRow);
+    const upperCells = setCells.filter(({ r }) => r < maxRow);
+
+    // Peeled blocks become normal (can fall and chain)
+    for (const { r, c } of bottomCells) {
+      grid[r][c] = {
+        sym: Math.floor(Math.random() * SYMBOLS.length),
+        junk: false, clearing: false, clearTimer: 0,
+        hover: false, hoverTimer: 0
+      };
+    }
+
+    // Remaining rows keep junk status under a new set ID
+    if (upperCells.length > 0) {
+      const newSetId = ++junkSetCounter;
+      for (const { r, c } of upperCells) {
+        grid[r][c] = { ...grid[r][c], junkSetId: newSetId };
       }
     }
   }
@@ -409,20 +446,36 @@ function breakAdjacentJunk(grid, matched) {
 function applyGravity(grid) {
   let moved = false;
 
-  // Regular (non-junk) blocks fall column by column
+  // Regular blocks: 9-frame hover before falling (processed bottom-to-top)
   for (let c = 0; c < COLS; c++) {
     for (let r = ROWS - 2; r >= 0; r--) {
       const block = grid[r][c];
-      if (block && !block.junk && !block.clearing && grid[r+1][c] === null) {
-        if (block.fallDelay > 0) { block.fallDelay--; continue; }
-        grid[r+1][c] = block;
-        grid[r][c] = null;
+      if (!block || block.junk || block.clearing) continue;
+
+      if (grid[r + 1][c] === null) {
+        // No solid support below — start hover on first tick and decrement immediately
+        if (!block.hover) {
+          block.hover = true;
+          block.hoverTimer = HOVER_TICKS;
+        }
         moved = true;
+        block.hoverTimer--;
+        if (block.hoverTimer <= 0) {
+          block.hover = false;
+          if (grid[r + 1][c] === null) {
+            grid[r + 1][c] = block;
+            grid[r][c] = null;
+          }
+        }
+      } else if (block.hover) {
+        // Support returned before hover expired
+        block.hover = false;
+        block.hoverTimer = 0;
       }
     }
   }
 
-  // Junk sets fall as rigid horizontal units
+  // Junk sets fall as rigid horizontal units (no hover)
   const junkSets = new Map();
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -440,13 +493,9 @@ function applyGravity(grid) {
     for (const { r, c } of cells) {
       if (r + 1 >= ROWS) { canFall = false; break; }
       const below = grid[r + 1][c];
-      if (below !== null && !setPositions.has(`${r + 1},${c}`)) {
-        canFall = false;
-        break;
-      }
+      if (below !== null && !setPositions.has(`${r + 1},${c}`)) { canFall = false; break; }
     }
     if (canFall) {
-      // Move bottom-to-top to avoid overwriting cells in the same set
       const sorted = [...cells].sort((a, b) => b.r - a.r);
       for (const { r, c } of sorted) {
         grid[r + 1][c] = grid[r][c];
@@ -460,27 +509,56 @@ function applyGravity(grid) {
 }
 
 // ── Add junk ──────────────────────────────────────────────────
-function addJunk(grid, count) {
+// Add a single garbage rod (width × height) above existing content
+function addJunkRod(grid, width, height) {
   let topRow = ROWS;
   for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (grid[r][c]) { topRow = r; break; }
-    }
-    if (topRow < ROWS) break;
+    if (grid[r].some(b => b !== null)) { topRow = r; break; }
   }
+  if (topRow === 0) return;
 
-  if (topRow === 0) return; // board full
-
-  const junkRow = Math.max(0, topRow - 1);
-  const cols = Math.min(count, COLS);
   const setId = ++junkSetCounter;
-  for (let c = 0; c < cols; c++) {
-    grid[junkRow][c] = { sym: -1, junk: true, junkSetId: setId, clearing: false, clearTimer: 0, fallDelay: 0 };
+  for (let h = 0; h < height; h++) {
+    const r = Math.max(0, topRow - height) + h;
+    if (r >= ROWS) break;
+    for (let c = 0; c < Math.min(width, COLS); c++) {
+      grid[r][c] = { sym: -1, junk: true, junkSetId: setId, clearing: false, clearTimer: 0, hover: false, hoverTimer: 0 };
+    }
   }
+}
 
-  if (count > COLS) {
-    addJunk(grid, count - COLS);
+// Garbage table: returns array of rod descriptors for a combo of given panel count
+function comboGarbageRods(size) {
+  if (size < 4)  return [];
+  if (size === 4)  return [{ width: 3, height: 1 }];
+  if (size === 5)  return [{ width: 4, height: 1 }];
+  if (size === 6)  return [{ width: 5, height: 1 }];
+  if (size === 7)  return [{ width: 6, height: 1 }];
+  if (size === 8)  return [{ width: 3, height: 1 }, { width: 4, height: 1 }];
+  if (size === 9)  return [{ width: 4, height: 1 }, { width: 4, height: 1 }];
+  if (size === 10) return [{ width: 5, height: 1 }, { width: 5, height: 1 }];
+  if (size === 11) return [{ width: 5, height: 1 }, { width: 6, height: 1 }];
+  if (size === 12) return [{ width: 6, height: 1 }, { width: 6, height: 1 }];
+  if (size === 13) return [{ width: 6, height: 1 }, { width: 6, height: 1 }, { width: 6, height: 1 }];
+  if (size <= 19)  return Array(4).fill(null).map(() => ({ width: 6, height: 1 }));
+  return Array(6).fill(null).map(() => ({ width: 6, height: 1 }));
+}
+
+// K-chain garbage: (K-1) full-width rows as a single block
+function chainGarbageRod(chainLevel) {
+  if (chainLevel < 2) return null;
+  return { width: COLS, height: chainLevel - 1 };
+}
+
+// Check if any block in grid is clearing or hovering (chain/motion check)
+function gridHasClearingOrHovering(grid) {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const b = grid[r][c];
+      if (b?.clearing || b?.hover) return true;
+    }
   }
+  return false;
 }
 
 // ── Settings helper ───────────────────────────────────────────
@@ -540,9 +618,9 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
           ctx.fillText('✖', x + CELL / 2, y + CELL / 2);
         }
       } else if (emojiMode) {
-        const alpha = block.clearing ? (block.clearTimer / CLEAR_DELAY) : 1;
+        const alpha = block.clearing ? Math.min(1, block.clearTimer / CLEAR_TICKS) : 1;
         ctx.globalAlpha = alpha;
-        if (block.clearing && Math.floor(block.clearTimer / 4) % 2 === 0) {
+        if (block.clearing && Math.floor(block.clearTimer / 2) % 2 === 0) {
           ctx.fillStyle = 'rgba(255,255,255,0.6)';
           ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
         }
@@ -553,7 +631,7 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
         ctx.globalAlpha = 1;
       } else {
         const col = COLORS[block.sym] || '#fff';
-        const alpha = block.clearing ? (block.clearTimer / CLEAR_DELAY) : 1;
+        const alpha = block.clearing ? Math.min(1, block.clearTimer / CLEAR_TICKS) : 1;
         ctx.globalAlpha = alpha;
 
         // Block background with gradient feel
@@ -565,7 +643,7 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
         ctx.fillRect(x + 2, y + 2, CELL - 4, 6);
 
         // Flash when clearing
-        if (block.clearing && Math.floor(block.clearTimer / 4) % 2 === 0) {
+        if (block.clearing && Math.floor(block.clearTimer / 2) % 2 === 0) {
           ctx.fillStyle = 'rgba(255,255,255,0.5)';
           ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
         }
@@ -636,12 +714,16 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
   let cursorRow = ROWS - 3;
   let cursorCol = 2;
   let riseOffset = 0;
-  let riseTick = 0;
   let nextRow = generateNextRow(myGrid);
   let gameOver = false;
   let animFrame = null;
   let tickInterval = null;
-  let junkQueue = 0;
+  // Chain state
+  let chainLevel = 0;
+  let chainActive = false;
+  let stopTimer = 0;
+  // Incoming junk telegraph queue
+  let junkPending = [];
 
   const gameStateRef = ref(db, `panelattack/games/${gameId}/${myId}`);
   const oppStateRef = ref(db, `panelattack/games/${gameId}/${oppId}`);
@@ -669,11 +751,17 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
     }
   });
 
-  // Watch junk sent to me
+  // Watch junk sent to me — queue with telegraph delay
   const junkUnsub = onValue(junkRef, snap => {
     const val = snap.val();
-    if (val && val.count) {
-      junkQueue += val.count;
+    if (val && val.rods && val.rods.length > 0) {
+      junkPending.push({ rods: val.rods, timer: JUNK_TELEGRAPH_TICKS });
+      remove(junkRef);
+    } else if (val && val.count) {
+      // legacy: convert count to full-width rods
+      const rods = [];
+      for (let i = 0; i < val.count; i++) rods.push({ width: COLS, height: 1 });
+      junkPending.push({ rods, timer: JUNK_TELEGRAPH_TICKS });
       remove(junkRef);
     }
   });
@@ -691,11 +779,12 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
     set(gameStateRef, { grid: flat, lost });
   }
 
-  function sendJunk(count) {
+  function sendJunkRods(rods) {
+    if (!rods || rods.length === 0) return;
     const ref2 = ref(db, `panelattack/junk/${gameId}/${oppId}`);
     get(ref2).then(snap => {
-      const existing = snap.val()?.count || 0;
-      set(ref2, { count: existing + count });
+      const existing = snap.val()?.rods || [];
+      set(ref2, { rods: [...existing, ...rods] });
     });
   }
 
@@ -817,37 +906,8 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
 
     processKeyRepeats();
 
-    // Apply junk queue
-    if (junkQueue > 0) {
-      addJunk(myGrid, junkQueue);
-      junkQueue = 0;
-    }
-
-    // Rise
-    const riseRate = speedRising ? 4 : 0.2;
-    riseOffset += riseRate;
-    speedRising = false;
-
-    riseTick++;
-    if (riseOffset >= CELL) {
-      riseOffset -= CELL;
-      // Shift grid up
-      myGrid.shift();
-      myGrid.push([...nextRow]);
-      nextRow = generateNextRow(myGrid);
-      cursorRow = Math.max(0, cursorRow - 1);
-
-      // Check lose condition
-      if (myGrid[0].some(b => b !== null)) {
-        triggerLose();
-        return;
-      }
-    }
-
-    // Gravity
-    applyGravity(myGrid);
-
-    // Tick clearing blocks
+    // Tick down clearing blocks and check motion state BEFORE clearing
+    const wasMoving = gridHasClearingOrHovering(myGrid);
     let anyClearing = false;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -855,23 +915,79 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
         if (b?.clearing) {
           anyClearing = true;
           b.clearTimer--;
-          if (b.clearTimer <= 0) {
-            myGrid[r][c] = null;
-          }
+          if (b.clearTimer <= 0) myGrid[r][c] = null;
         }
       }
     }
 
-    // Match if no clearing in progress
-    if (!anyClearing) {
+    // Process telegraphed junk arrivals
+    for (let i = junkPending.length - 1; i >= 0; i--) {
+      junkPending[i].timer--;
+      if (junkPending[i].timer <= 0) {
+        for (const rod of junkPending[i].rods) addJunkRod(myGrid, rod.width, rod.height);
+        junkPending.splice(i, 1);
+      }
+    }
+
+    // Rise (frozen during stop time)
+    if (stopTimer > 0) {
+      stopTimer--;
+    } else {
+      const riseRate = speedRising ? (CELL / 10) : (CELL / RISE_TICKS_PER_ROW);
+      riseOffset += riseRate;
+      speedRising = false;
+
+      if (riseOffset >= CELL) {
+        riseOffset -= CELL;
+        myGrid.shift();
+        myGrid.push([...nextRow]);
+        nextRow = generateNextRow(myGrid);
+        cursorRow = Math.max(0, cursorRow - 1);
+
+        if (myGrid[0].some(b => b !== null)) {
+          triggerLose();
+          return;
+        }
+      }
+    }
+    speedRising = false;
+
+    // Gravity (hover + fall)
+    applyGravity(myGrid);
+
+    // Match detection — only when no clearing or hovering blocks remain
+    if (!gridHasClearingOrHovering(myGrid)) {
       const matched = findMatches(myGrid);
       if (matched.size > 0) {
-        const size = countMatchSize(matched);
+        const size = matched.size;
+
+        // Determine chain vs fresh combo
+        const isChain = chainActive && wasMoving;
+        if (isChain) {
+          chainLevel++;
+        } else {
+          chainLevel = 1;
+          chainActive = true;
+        }
+
         markClearing(myGrid, matched);
         breakAdjacentJunk(myGrid, matched);
-        if (size >= 4) {
-          sendJunk(size - 3);
-        }
+
+        // Send combo garbage
+        const comboRods = comboGarbageRods(size);
+        // Send chain garbage
+        const chainRod = isChain ? chainGarbageRod(chainLevel) : null;
+        const allRods = chainRod ? [...comboRods, chainRod] : comboRods;
+        sendJunkRods(allRods);
+
+        // Stop time
+        const topped = myGrid[0].some(b => b !== null);
+        const newStop = topped ? STOP_TOPOUT_TICKS : isChain ? STOP_CHAIN_TICKS : STOP_COMBO_TICKS;
+        stopTimer = Math.max(stopTimer, newStop);
+      } else if (!wasMoving) {
+        // Board settled with no match — end chain
+        chainActive = false;
+        chainLevel = 0;
       }
     }
 
@@ -945,14 +1061,10 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   let gameOver = false;
   let animFrame = null;
   let tickInterval = null;
-  let myJunkQueue = 0;
-
   // Bot state
-  let botRiseOffset = 0;
   let botNextRow = generateNextRow(botGrid);
   let botCursorRow = ROWS - 3;
   let botCursorCol = 2;
-  let botJunkQueue = 0;
   let botThinkTick = 0;
   const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : difficulty === 'extreme' ? 1 : 6;
   const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : difficulty === 'extreme' ? 6 : 3;
@@ -1364,29 +1476,9 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
   // ── Tick ──────────────────────────────────────────────────
   function tickBoard(grid, state) {
-    // Rise
-    const riseRate = state.speedRising ? 4 : 0.2;
-    state.riseOffset += riseRate;
-    state.speedRising = false;
+    const wasMoving = gridHasClearingOrHovering(grid);
 
-    if (state.riseOffset >= CELL) {
-      state.riseOffset -= CELL;
-      grid.shift();
-      grid.push([...state.nextRow]);
-      state.nextRow = generateNextRow(grid);
-      state.cursorRow = Math.max(0, state.cursorRow - 1);
-      if (grid[0].some(b => b !== null)) return 'lose';
-    }
-
-    // Apply junk
-    if (state.junkQueue > 0) {
-      addJunk(grid, state.junkQueue);
-      state.junkQueue = 0;
-    }
-
-    applyGravity(grid);
-
-    // Tick clearing
+    // Tick down clearing blocks
     let anyClearing = false;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -1399,14 +1491,64 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       }
     }
 
-    // Match
-    if (!anyClearing) {
+    // Process telegraphed junk arrivals
+    for (let i = state.junkPending.length - 1; i >= 0; i--) {
+      state.junkPending[i].timer--;
+      if (state.junkPending[i].timer <= 0) {
+        for (const rod of state.junkPending[i].rods) addJunkRod(grid, rod.width, rod.height);
+        state.junkPending.splice(i, 1);
+      }
+    }
+
+    // Rise (frozen during stop time)
+    if (state.stopTimer > 0) {
+      state.stopTimer--;
+    } else {
+      const riseRate = state.speedRising ? (CELL / 10) : (CELL / RISE_TICKS_PER_ROW);
+      state.riseOffset += riseRate;
+      state.speedRising = false;
+
+      if (state.riseOffset >= CELL) {
+        state.riseOffset -= CELL;
+        grid.shift();
+        grid.push([...state.nextRow]);
+        state.nextRow = generateNextRow(grid);
+        state.cursorRow = Math.max(0, state.cursorRow - 1);
+        if (grid[0].some(b => b !== null)) return 'lose';
+      }
+    }
+    state.speedRising = false;
+
+    applyGravity(grid);
+
+    // Match detection — only when no clearing or hovering
+    if (!gridHasClearingOrHovering(grid)) {
       const matched = findMatches(grid);
       if (matched.size > 0) {
-        const size = countMatchSize(matched);
+        const size = matched.size;
+
+        const isChain = state.chainActive && wasMoving;
+        if (isChain) {
+          state.chainLevel++;
+        } else {
+          state.chainLevel = 1;
+          state.chainActive = true;
+        }
+
         markClearing(grid, matched);
         breakAdjacentJunk(grid, matched);
-        if (size >= 4) state.sendJunk(size - 3);
+
+        const comboRods = comboGarbageRods(size);
+        const chainRod = isChain ? chainGarbageRod(state.chainLevel) : null;
+        const allRods = chainRod ? [...comboRods, chainRod] : comboRods;
+        if (allRods.length > 0) state.sendJunkRods(allRods);
+
+        const topped = grid[0].some(b => b !== null);
+        const newStop = topped ? STOP_TOPOUT_TICKS : isChain ? STOP_CHAIN_TICKS : STOP_COMBO_TICKS;
+        state.stopTimer = Math.max(state.stopTimer, newStop);
+      } else if (!wasMoving) {
+        state.chainActive = false;
+        state.chainLevel = 0;
       }
     }
 
@@ -1419,8 +1561,11 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     nextRow: myNextRow,
     cursorRow,
     cursorCol,
-    junkQueue: myJunkQueue,
-    sendJunk: (n) => { botState.junkQueue += n; }
+    junkPending: [],
+    chainLevel: 0,
+    chainActive: false,
+    stopTimer: 0,
+    sendJunkRods: (rods) => { botState.junkPending.push({ rods, timer: JUNK_TELEGRAPH_TICKS }); }
   };
 
   const botState = {
@@ -1429,8 +1574,11 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     nextRow: botNextRow,
     cursorRow: botCursorRow,
     cursorCol: botCursorCol,
-    junkQueue: botJunkQueue,
-    sendJunk: (n) => { playerState.junkQueue += n; }
+    junkPending: [],
+    chainLevel: 0,
+    chainActive: false,
+    stopTimer: 0,
+    sendJunkRods: (rods) => { playerState.junkPending.push({ rods, timer: JUNK_TELEGRAPH_TICKS }); }
   };
 
   function tick() {
@@ -1438,16 +1586,11 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
     processKeyRepeats();
 
-    // Sync player cursor/junk into state
+    // Sync player cursor into state
     playerState.cursorRow = cursorRow;
     playerState.cursorCol = cursorCol;
     playerState.speedRising = speedRising;
     speedRising = false;
-    playerState.junkQueue = myJunkQueue;
-    myJunkQueue = 0;
-
-    botState.junkQueue = botJunkQueue;
-    botJunkQueue = 0;
 
     // Bot AI
     botThinkTick++;
@@ -1461,9 +1604,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
     const playerResult = tickBoard(myGrid, playerState);
     const botResult = tickBoard(botGrid, botState);
 
-    // Sync state back
     cursorRow = playerState.cursorRow;
-    myJunkQueue = playerState.junkQueue;
 
     if (playerResult === 'lose') { gameOver = true; cleanup(); onGameOver(false); return; }
     if (botResult === 'lose') { gameOver = true; cleanup(); onGameOver(true); return; }
