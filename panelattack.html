@@ -143,6 +143,75 @@
       text-align: center;
     }
 
+    /* ── LEADERBOARD ───────────────────────────── */
+    .leaderboard-section {
+      width: 100%;
+      max-width: 560px;
+      margin-top: 28px;
+    }
+
+    .leaderboard-section h2 {
+      font-size: 11px;
+      color: var(--c4);
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .my-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      background: var(--surface);
+      border: 1px solid var(--accent2);
+      padding: 10px 14px;
+      margin-bottom: 10px;
+      font-size: 8px;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .my-stats b { color: var(--accent2); font-weight: normal; }
+
+    .leaderboard-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .leaderboard {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8px;
+    }
+
+    .leaderboard th,
+    .leaderboard td {
+      padding: 8px 6px;
+      text-align: center;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .leaderboard th { color: var(--muted); font-weight: normal; }
+    .leaderboard th.th-extreme { color: #f87171; }
+    .leaderboard .lb-name { text-align: left; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    .leaderboard .lb-rank { color: var(--muted); }
+    .leaderboard .lb-beaten { color: var(--success); }
+    .leaderboard .lb-survived { color: var(--c4); }
+    .leaderboard .lb-none { color: var(--border); }
+    .leaderboard .lb-pvp { color: var(--accent2); }
+    .leaderboard .lb-empty { color: var(--muted); padding: 20px; }
+    .leaderboard tr.lb-me td { background: rgba(6,182,212,0.12); }
+    .leaderboard tr.lb-me .lb-name { color: var(--accent2); }
+
+    .leaderboard-legend {
+      font-size: 7px;
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 2;
+    }
+
     /* ── INVITE MODAL ───────────────────────────── */
     .modal-backdrop {
       display: none;
@@ -492,6 +561,33 @@
       <div class="empty-lobby">No players online yet…</div>
     </div>
   </div>
+
+  <div class="leaderboard-section">
+    <h2>🏆 Leaderboard</h2>
+    <div class="my-stats" id="my-stats">Loading your stats…</div>
+    <div class="leaderboard-scroll">
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left;">PLAYER</th>
+            <th>EASY</th>
+            <th>MED</th>
+            <th>HARD</th>
+            <th class="th-extreme">EXTREME</th>
+            <th>ONLINE W-L</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body">
+          <tr><td colspan="7" class="lb-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="leaderboard-legend">
+      <span style="color:var(--success);">✓ 1:23</span> beat the bot (fastest win) ·
+      <span style="color:var(--c4);">1:23</span> not beaten yet (longest game)
+    </div>
+  </div>
 </div>
 
 <!-- ── SETTINGS MODAL ─────────────────────────── -->
@@ -581,6 +677,7 @@
   <div class="game-over-box">
     <h2 id="game-over-title"></h2>
     <p id="game-over-msg"></p>
+    <p id="game-over-note" style="display:none;color:var(--c4);margin-top:-12px;"></p>
     <div class="game-over-actions">
       <button class="btn cyan" id="rematch-btn">Rematch</button>
       <button class="btn secondary" id="lobby-btn">Back to Lobby</button>

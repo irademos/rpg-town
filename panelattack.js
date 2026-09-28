@@ -11,6 +11,14 @@ import {
   get,
   serverTimestamp
 } from 'firebase/database';
+import {
+  getPlayerUid,
+  saveName,
+  recordBotResult,
+  recordPvpResult,
+  watchLeaderboard,
+  formatDuration
+} from './panelattackStats.js';
 
 // ── Firebase init ─────────────────────────────────────────────
 const firebaseConfig = {
@@ -37,7 +45,8 @@ const JUNK_COLOR = '#44403c';
 const JUNK_BORDER = '#78716c';
 const BG_COLOR = '#0a0a1a';
 const GRID_COLOR = '#12122a';
-const CURSOR_COLOR = '#06b6d4';
+const CURSOR_COLOR = '#22d3ee';
+const CURSOR_CORNER_COLOR = '#fde047';
 const TICK_MS = 80;
 // Frame values converted from 60 FPS: divide by 4.8 (80ms tick = 4.8 frames)
 const CLEAR_TICKS = 10;           // 49 frames total (36 flash + 13 face)
@@ -50,6 +59,9 @@ const JUNK_TELEGRAPH_TICKS = 16;  // 78 frames garbage telegraph
 const RISE_TICKS_PER_ROW = 99;    // speed 11: 474 frames/row
 
 let junkSetCounter = 0;
+
+// ── Player identity / stats ───────────────────────────────────
+const playerUid = getPlayerUid();
 
 // ── Lobby state ───────────────────────────────────────────────
 let myId = null;
@@ -81,18 +93,28 @@ function clearLobbyError() {
 
 // ── Bot game entry ────────────────────────────────────────────
 document.getElementById('vs-bot-btn').addEventListener('click', () => {
-  const name = nameInput.value.trim() || 'Player';
+  const enteredName = nameInput.value.trim();
+  const name = enteredName || 'Player';
   myName = name;
   localStorage.setItem('panelattack_name', name);
+  if (enteredName) saveName(db, playerUid, enteredName);
   const difficultyEl = document.querySelector('input[name="bot-difficulty"]:checked');
   const difficulty = difficultyEl ? difficultyEl.value : 'medium';
   lobbyScreen.style.display = 'none';
   gameScreen.style.display = 'flex';
   document.getElementById('my-label').textContent = myName;
   document.getElementById('enemy-label').textContent = `BOT (${difficulty.toUpperCase()})`;
+  const botLabel = `BOT (${difficulty.toUpperCase()})`;
+  const record = (won, elapsedMs) =>
+    recordBotResult(db, playerUid, enteredName, difficulty, won, elapsedMs);
   gameSession = createBotGameSession({
     difficulty,
-    onGameOver: (won) => showGameOver(won, `BOT (${difficulty.toUpperCase()})`)
+    onGameOver: async (won, elapsedMs) => {
+      showGameOver(won, botLabel);
+      const summary = await record(won, elapsedMs);
+      setGameOverNote(botResultNote(won, difficulty, elapsedMs, summary));
+    },
+    onForfeit: (elapsedMs) => record(false, elapsedMs)
   });
   gameSession.start();
 });
@@ -109,6 +131,7 @@ async function joinLobby() {
   clearLobbyError();
   myName = name;
   localStorage.setItem('panelattack_name', name);
+  saveName(db, playerUid, name);
 
   myId = push(ref(db, 'panelattack/lobby')).key;
   myPresenceRef = ref(db, `panelattack/lobby/${myId}`);
@@ -152,6 +175,12 @@ function watchLobby() {
 
 // Watch lobby immediately so players are visible before joining
 watchLobby();
+
+watchLeaderboard(db, playerUid, {
+  tableBody: document.getElementById('leaderboard-body'),
+  myStatsEl: document.getElementById('my-stats'),
+  onError: err => console.warn('[panelattack] leaderboard error', err)
+});
 
 function renderPlayerList(data) {
   const ids = Object.keys(data);
@@ -249,7 +278,11 @@ function startGame(myPlayerId, oppId, oppName, isHost) {
     oppId,
     gameId,
     isHost,
-    onGameOver: (won) => showGameOver(won, oppName)
+    onGameOver: (won) => {
+      showGameOver(won, oppName);
+      recordPvpResult(db, playerUid, myName, won);
+    },
+    onForfeit: () => recordPvpResult(db, playerUid, myName, false)
   });
 
   gameSession.start();
@@ -264,7 +297,23 @@ function showGameOver(won, oppName) {
   msg.textContent = won
     ? `${oppName} ran out of space!`
     : 'Your blocks reached the top!';
+  setGameOverNote('');
   gameOverOverlay.classList.add('open');
+}
+
+function setGameOverNote(text) {
+  const note = document.getElementById('game-over-note');
+  note.textContent = text;
+  note.style.display = text ? 'block' : 'none';
+}
+
+function botResultNote(won, difficulty, elapsedMs, summary) {
+  const diff = difficulty.toUpperCase();
+  const time = formatDuration(elapsedMs);
+  if (won && summary.firstWin) return `★ First win vs ${diff}! (${time})`;
+  if (won && summary.newFastest) return `★ New fastest win vs ${diff}: ${time}`;
+  if (!won && summary.newBest) return `★ New longest game vs ${diff}: ${time}`;
+  return `Time: ${time}`;
 }
 
 document.getElementById('rematch-btn').addEventListener('click', () => {
@@ -691,14 +740,50 @@ function renderBoard(ctx, grid, cursorRow, cursorCol, riseOffset, showCursor, ne
   if (showCursor && cursorRow >= 0 && cursorCol >= 0 && cursorCol < COLS - 1) {
     const x = cursorCol * CELL;
     const y = cursorRow * CELL - riseOffset;
-    ctx.strokeStyle = CURSOR_COLOR;
+    const w = CELL * 2;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160);
+
+    // Tint the two selected cells so they stand out from the rest of the board
+    ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.08 * pulse})`;
+    ctx.fillRect(x, y, w, CELL);
+
+    // Dark outline behind the bright frame for contrast against any block color
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(x + 2, y + 2, w - 4, CELL - 4);
+
+    // Bright glowing frame
+    ctx.save();
+    ctx.shadowColor = CURSOR_COLOR;
+    ctx.shadowBlur = 10 + 8 * pulse;
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
-    ctx.strokeRect(x + 1, y + 1, CELL * 2 - 2, CELL - 2);
+    ctx.strokeRect(x + 2, y + 2, w - 4, CELL - 4);
+    ctx.restore();
+
+    // Divider between the two panels being swapped
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + CELL + 0.5, y + 5);
+    ctx.lineTo(x + CELL + 0.5, y + CELL - 5);
+    ctx.stroke();
+
+    // Yellow corner brackets
+    const L = 8;
+    ctx.strokeStyle = CURSOR_CORNER_COLOR;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x + 1.5, y + 1.5 + L); ctx.lineTo(x + 1.5, y + 1.5); ctx.lineTo(x + 1.5 + L, y + 1.5);
+    ctx.moveTo(x + w - 1.5 - L, y + 1.5); ctx.lineTo(x + w - 1.5, y + 1.5); ctx.lineTo(x + w - 1.5, y + 1.5 + L);
+    ctx.moveTo(x + 1.5, y + CELL - 1.5 - L); ctx.lineTo(x + 1.5, y + CELL - 1.5); ctx.lineTo(x + 1.5 + L, y + CELL - 1.5);
+    ctx.moveTo(x + w - 1.5 - L, y + CELL - 1.5); ctx.lineTo(x + w - 1.5, y + CELL - 1.5); ctx.lineTo(x + w - 1.5, y + CELL - 1.5 - L);
+    ctx.stroke();
   }
 }
 
 // ── Game Session ──────────────────────────────────────────────
-function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
+function createGameSession({ myId, oppId, gameId, isHost, onGameOver, onForfeit }) {
   const myCanvas = document.getElementById('my-canvas');
   const enemyCanvas = document.getElementById('enemy-canvas');
   const myCtx = myCanvas.getContext('2d');
@@ -1034,13 +1119,15 @@ function createGameSession({ myId, oppId, gameId, isHost, onGameOver }) {
       cleanup();
     },
     forfeit() {
+      if (gameOver) return;
       pushState(true);
+      onForfeit?.();
     }
   };
 }
 
 // ── Bot Game Session ──────────────────────────────────────────
-function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
+function createBotGameSession({ onGameOver, onForfeit, difficulty = 'medium' }) {
   const myCanvas = document.getElementById('my-canvas');
   const enemyCanvas = document.getElementById('enemy-canvas');
   const myCtx = myCanvas.getContext('2d');
@@ -1066,6 +1153,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
   let botCursorRow = ROWS - 3;
   let botCursorCol = 2;
   let botThinkTick = 0;
+  // Game-time elapsed, counted in ticks so throttled background tabs don't inflate it
+  let elapsedTicks = 0;
   const BOT_THINK_RATE = difficulty === 'easy' ? 15 : difficulty === 'hard' ? 2 : difficulty === 'extreme' ? 1 : 6;
   const BOT_DANGER_ROW = difficulty === 'easy' ? 2 : difficulty === 'hard' ? 4 : difficulty === 'extreme' ? 6 : 3;
   const BOT_SPEED_RISE = difficulty === 'extreme'; // extreme bot also speed-raises aggressively
@@ -1583,6 +1672,7 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
   function tick() {
     if (gameOver) return;
+    elapsedTicks++;
 
     processKeyRepeats();
 
@@ -1606,8 +1696,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
 
     cursorRow = playerState.cursorRow;
 
-    if (playerResult === 'lose') { gameOver = true; cleanup(); onGameOver(false); return; }
-    if (botResult === 'lose') { gameOver = true; cleanup(); onGameOver(true); return; }
+    if (playerResult === 'lose') { gameOver = true; cleanup(); onGameOver(false, elapsedTicks * TICK_MS); return; }
+    if (botResult === 'lose') { gameOver = true; cleanup(); onGameOver(true, elapsedTicks * TICK_MS); return; }
   }
 
   function cleanup() {
@@ -1635,7 +1725,8 @@ function createBotGameSession({ onGameOver, difficulty = 'medium' }) {
       cleanup();
     },
     forfeit() {
-      // no-op for bot game
+      if (gameOver) return;
+      onForfeit?.(elapsedTicks * TICK_MS);
     }
   };
 }
